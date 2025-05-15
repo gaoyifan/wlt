@@ -51,7 +51,7 @@ def index():
     ip = get_client_ip()
     record = get_nft_map_entry(ip)
     
-    current_outlet = record.get("outlet", "已重置") if record else "已重置"
+    current_outlet = record.get("outlet", "默认") if record else "默认"
     return render_template_string(TEMPLATE, ip=ip, current_outlet=current_outlet,
                                   outlets=OUTLETS.keys(), time_limits=TIME_LIMITS)
 
