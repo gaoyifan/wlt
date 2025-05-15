@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, redirect, url_for, flash
+from flask import Flask, request, render_template, redirect, url_for, flash
 import os
 import json
 import subprocess
@@ -64,8 +64,8 @@ def index():
     record = get_nft_map_entry(ip)
     
     current_outlet = record.get("outlet", "默认") if record else "默认"
-    return render_template_string(TEMPLATE, ip=ip, current_outlet=current_outlet,
-                                  outlets=OUTLETS.keys(), time_limits=TIME_LIMITS)
+    return render_template("index.html", ip=ip, current_outlet=current_outlet,
+                          outlets=OUTLETS.keys(), time_limits=TIME_LIMITS)
 
 @app.route("/open", methods=["POST"])
 def open_net():
@@ -135,51 +135,6 @@ def close_net():
         flash(f"重置网络失败: {str(e)}")
     
     return redirect(url_for("index"))
-
-# ------------------------
-# HTML 模板
-# ------------------------
-TEMPLATE = """
-<!doctype html>
-<title>网络通</title>
-<style>
-body {font-family: sans-serif; margin:40px;}
-h2   {margin-bottom:5px;}
-label{display:block;margin-top:8px;}
-button{margin-top:12px;padding:6px 16px;font-size:1em;}
-.flash{color:green;margin-bottom:12px;}
-</style>
-
-<h2>当前信息</h2>
-<p><strong>IP：</strong>{{ ip }}</p>
-<p><strong>当前出口：</strong>{{ current_outlet }}</p>
-
-{% with messages = get_flashed_messages() %}
-  {% if messages %}
-    <div class="flash">{{ messages[0] }}</div>
-  {% endif %}
-{% endwith %}
-
-<form method="post" action="{{ url_for('open_net') }}">
-  <h2>选择出口</h2>
-  {% for o in outlets %}
-      <label><input type="radio" name="outlet" value="{{ o }}" {% if loop.first %}checked{% endif %}> {{ o }}</label>
-  {% endfor %}
-
-  <h2>选择时限</h2>
-  {% for label, hour in time_limits %}
-      <label>
-        <input type="radio" name="hours" value="{{ hour }}" {% if loop.first %}checked{% endif %}> {{ label }}
-      </label>
-  {% endfor %}
-
-  <button type="submit">开通网络</button>
-</form>
-
-<form method="post" action="{{ url_for('close_net') }}">
-  <button type="submit" style="background:#c33;color:#fff;">重置网络</button>
-</form>
-"""
 
 def main():
     host = os.environ.get('WLT_HOST', '0.0.0.0')
