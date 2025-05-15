@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  wlt:
+    build:
+      context: .
+      network: host
+    container_name: wlt
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    environment:
+      - SECRET_KEY=change_this_in_production
+      - WLT_HOST=0.0.0.0
+      - WLT_PORT=80 
