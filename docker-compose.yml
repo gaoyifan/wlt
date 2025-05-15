@@ -12,5 +12,5 @@ services:
     restart: unless-stopped
     environment:
       - SECRET_KEY=change_this_in_production
-      - WLT_HOST=0.0.0.0
+      - WLT_HOST=100.65.1.254
       - WLT_PORT=80 
