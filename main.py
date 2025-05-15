@@ -32,13 +32,25 @@ def get_nft_map_entry(ip):
             map_data = data["nftables"][1].get("map", {})
             if "elem" in map_data:
                 for elem in map_data["elem"]:
-                    if elem[0]["elem"]["val"] == ip:
+                    ip_match = False
+                    expires = None
+                    
+                    # 提取IP和过期时间
+                    if isinstance(elem[0], dict) and "elem" in elem[0]:
+                        # 有超时信息的格式
+                        if elem[0]["elem"]["val"] == ip:
+                            ip_match = True
+                            expires = elem[0]["elem"].get("expires")
+                    elif elem[0] == ip:
+                        # 无超时信息的格式
+                        ip_match = True
+                    
+                    if ip_match:
                         mark_value = elem[1]
-                        # 查找对应的出口名称
                         outlet = next((k for k, v in OUTLETS.items() if v == hex(mark_value)), "未知")
                         return {
                             "outlet": outlet,
-                            "expires": elem[0]["elem"].get("expires"),
+                            "expires": expires,
                             "mark": mark_value
                         }
         return None
