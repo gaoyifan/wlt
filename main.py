@@ -8,8 +8,9 @@ app.secret_key = os.environ.get('SECRET_KEY', 'dev_key_for_testing')  # 添加�
 
 # 出口配置
 OUTLETS = {
-    "1 国内出口": "0x1",
-    "2 国际出口": "0x2",
+    "国内出口": "0x1",
+    "国际出口": "0x2",
+    "科大出口": "0x3",
 }
 
 TIME_LIMITS = [("1小时", 1), ("4小时", 4), ("11小时", 11), ("14小时", 14), ("永久", None)]
