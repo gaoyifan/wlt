@@ -2,6 +2,7 @@ from flask import Flask, request, render_template, redirect, url_for, flash
 import os
 import json
 import subprocess
+import socket
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev_key_for_testing')  # 添加密钥配置
@@ -18,6 +19,15 @@ TIME_LIMITS = [("1小时", 1), ("4小时", 4), ("8小时", 8), ("24小时", 24),
 def get_client_ip() -> str:
     """取客户端IP地址"""
     return request.remote_addr
+
+def get_hostname_from_ip(ip: str) -> str:
+    """通过PTR记录获取IP对应的主机名"""
+    try:
+        hostname = socket.gethostbyaddr(ip)[0]
+        return hostname
+    except (socket.herror, socket.gaierror, OSError) as e:
+        app.logger.debug(f"无法获取IP {ip} 的主机名: {e}")
+        return ip  # 如果无法获取主机名，返回IP地址
 
 def get_nft_map_entry(ip):
     """获取指定IP在nftables中的记录"""
@@ -62,11 +72,14 @@ def get_nft_map_entry(ip):
 @app.route("/", methods=["GET"])
 def index():
     ip = get_client_ip()
+    hostname = get_hostname_from_ip(ip)
     record = get_nft_map_entry(ip)
     
     current_outlet = record.get("outlet", "默认") if record else "默认"
-    return render_template("index.html", ip=ip, current_outlet=current_outlet,
-                          outlets=OUTLETS.keys(), time_limits=TIME_LIMITS)
+    expires_seconds = record.get("expires") if record else None
+    
+    return render_template("index.html.j2", ip=ip, hostname=hostname, current_outlet=current_outlet,
+                          expires_seconds=expires_seconds, outlets=OUTLETS.keys(), time_limits=TIME_LIMITS)
 
 @app.route("/open", methods=["POST"])
 def open_net():
