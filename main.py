@@ -1,17 +1,16 @@
 import json
+import logging
 import os
 import socket
 import subprocess
-from typing import Dict, List, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any
 
 import yaml
 from flask import Flask, flash, redirect, render_template, request, url_for
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-app = Flask(__name__)
-
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.yml")
-
+# --- Configuration Models ---
 
 class FlaskConfig(BaseModel):
     secret_key: str = "dev_key_for_testing"
@@ -19,259 +18,205 @@ class FlaskConfig(BaseModel):
     port: int = 80
     debug: bool = True
 
-
 class NftablesConfig(BaseModel):
     family: str = "inet"
     table: str = "wlt"
-    map: str = "src2mark"
-
-
-class TimeLimit(BaseModel):
-    label: str
-    hours: int | None = None
-
+    map_name: str = Field("src2mark", alias="map")
 
 class AppConfig(BaseModel):
     flask: FlaskConfig = Field(default_factory=FlaskConfig)
     nftables: NftablesConfig = Field(default_factory=NftablesConfig)
     outlets: Dict[str, str]
-    time_limits: List[TimeLimit]
+    time_limits: List[int]
 
     @field_validator("outlets")
     @classmethod
-    def validate_outlets(cls, value: Dict[str, str]) -> Dict[str, str]:
-        if not value:
-            raise ValueError("outlets 至少需要一个条目")
-        return value
+    def validate_outlets(cls, v: Dict[str, str]) -> Dict[str, str]:
+        if not v:
+            raise ValueError("outlets cannot be empty")
+        return v
 
     @field_validator("time_limits")
     @classmethod
-    def validate_time_limits(cls, value: List[TimeLimit]) -> List[TimeLimit]:
-        if not value:
-            raise ValueError("time_limits 不能为空")
-        return value
+    def validate_time_limits(cls, v: List[int]) -> List[int]:
+        if not v:
+            raise ValueError("time_limits cannot be empty")
+        return v
 
+# --- Globals & Setup ---
 
-def load_config(path: str = CONFIG_PATH) -> AppConfig:
-    """Load YAML config and validate via Pydantic."""
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = app.logger
+
+def load_config(path: str = "config.yml") -> AppConfig:
+    path = os.path.join(os.path.dirname(__file__), path)
     try:
-        with open(path, "r", encoding="utf-8") as config_file:
-            loaded = yaml.safe_load(config_file) or {}
-    except FileNotFoundError as err:
-        raise RuntimeError(f"找不到配置文件: {path}") from err
-    except yaml.YAMLError as err:
-        raise RuntimeError(f"解析配置文件失败: {err}") from err
-
-    try:
-        return AppConfig.model_validate(loaded)
-    except ValidationError as err:
-        raise RuntimeError(f"配置文件字段验证失败: {err}") from err
-
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return AppConfig.model_validate(data)
+    except (FileNotFoundError, yaml.YAMLError, ValidationError) as e:
+        logger.error(f"Config error: {e}")
+        raise RuntimeError(f"Failed to load config: {e}")
 
 CONFIG = load_config()
-
 app.secret_key = CONFIG.flask.secret_key
 
-OUTLETS = CONFIG.outlets
-TIME_LIMITS: List[Tuple[str, int | None]] = [
-    (limit.label, limit.hours) for limit in CONFIG.time_limits
-]
+# --- Helpers ---
 
-def get_client_ip() -> str:
-    """取客户端IP地址"""
-    return request.remote_addr
+def get_duration_label(hours: int) -> str:
+    return "永久" if hours == 0 else f"{hours}小时"
 
-def get_hostname_from_ip(ip: str) -> str:
-    """通过PTR记录获取IP对应的主机名"""
+@dataclass
+class NftEntry:
+    outlet: str
+    mark: str
+    expires: Optional[int] = None
+
+class NftHandler:
+    def __init__(self, config: NftablesConfig, outlets: Dict[str, str]):
+        self.cfg = config
+        self.outlets = outlets
+        self.rev_outlets = {v: k for k, v in outlets.items()}
+
+    def _run(self, args: List[str], check: bool = True) -> subprocess.CompletedProcess:
+        cmd = ["nft"] + args
+        logger.debug(f"Running: {' '.join(cmd)}")
+        return subprocess.run(cmd, capture_output=True, text=True, check=check)
+
+    def _json_cmd(self, args: List[str]) -> Any:
+        res = self._run(["--json"] + args)
+        return json.loads(res.stdout)
+
+    def get_entry(self, ip: str) -> Optional[NftEntry]:
+        try:
+            data = self._json_cmd(["list", "map", self.cfg.family, self.cfg.table, self.cfg.map_name])
+            
+            # Navigate JSON structure: {"nftables": [..., {"map": {"elem": [...]}}]}
+            nftables = data.get("nftables", [])
+            if len(nftables) <= 1:
+                return None
+                
+            map_data = nftables[1].get("map", {})
+            elements = map_data.get("elem", [])
+
+            for item in elements:
+                # Item format: 
+                # Case 1 (Timeout): [{"elem": {"val": "IP", "timeout": ..., "expires": ...}}, "MARK"]
+                # Case 2 (Permanent): ["IP", "MARK"]
+                
+                elem_key = item[0]
+                mark_val = item[1]
+                expires = None
+                matched_ip = None
+
+                if isinstance(elem_key, dict) and "elem" in elem_key:
+                    matched_ip = elem_key["elem"].get("val")
+                    expires = elem_key["elem"].get("expires")
+                else:
+                    matched_ip = elem_key
+
+                if matched_ip == ip:
+                    outlet_name = self.rev_outlets.get(hex(mark_val) if isinstance(mark_val, int) else mark_val, "未知")
+                    return NftEntry(outlet=outlet_name, mark=str(mark_val), expires=expires)
+
+        except (subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError) as e:
+            logger.error(f"Failed to fetch nftables entry for {ip}: {e}")
+        return None
+
+    def delete_element(self, ip: str) -> bool:
+        try:
+            # Check=False because it might not exist
+            self._run(["delete", "element", self.cfg.family, self.cfg.table, self.cfg.map_name, "{", ip, "}"], check=False)
+            return True
+        except subprocess.SubprocessError as e:
+            logger.error(f"Error deleting rule for {ip}: {e}")
+            return False
+
+    def add_element(self, ip: str, mark: str, hours: Optional[int]) -> bool:
+        try:
+            # Construct element string
+            if hours:
+                elem_spec = [f"{ip}", "timeout", f"{hours}h", ":", mark]
+            else:
+                elem_spec = [f"{ip}", ":", mark]
+            
+            cmd = ["add", "element", self.cfg.family, self.cfg.table, self.cfg.map_name, "{"] + elem_spec + ["}"]
+            self._run(cmd)
+            return True
+        except subprocess.SubprocessError as e:
+            logger.error(f"Error adding rule for {ip}: {e}")
+            return False
+
+nft = NftHandler(CONFIG.nftables, CONFIG.outlets)
+
+def get_client_info() -> tuple[str, str]:
+    ip = request.remote_addr or "127.0.0.1"
     try:
         hostname = socket.gethostbyaddr(ip)[0]
-        return hostname
-    except (socket.herror, socket.gaierror, OSError) as e:
-        app.logger.debug(f"无法获取IP {ip} 的主机名: {e}")
-        return ip  # 如果无法获取主机名，返回IP地址
+    except (socket.herror, OSError):
+        hostname = ip
+    return ip, hostname
 
-def get_nft_map_entry(ip):
-    """获取指定IP在nftables中的记录"""
-    try:
-        result = subprocess.run(
-            [
-                "nft",
-                "--json",
-                "list",
-                "map",
-                CONFIG.nftables.family,
-                CONFIG.nftables.table,
-                CONFIG.nftables.map,
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        data = json.loads(result.stdout)
-        
-        # 解析nft输出查找指定IP
-        if "nftables" in data and len(data["nftables"]) > 1:
-            map_data = data["nftables"][1].get("map", {})
-            if "elem" in map_data:
-                for elem in map_data["elem"]:
-                    ip_match = False
-                    expires = None
-                    
-                    # 提取IP和过期时间
-                    if isinstance(elem[0], dict) and "elem" in elem[0]:
-                        # 有超时信息的格式
-                        if elem[0]["elem"]["val"] == ip:
-                            ip_match = True
-                            expires = elem[0]["elem"].get("expires")
-                    elif elem[0] == ip:
-                        # 无超时信息的格式
-                        ip_match = True
-                    
-                    if ip_match:
-                        mark_value = elem[1]
-                        outlet = next((k for k, v in OUTLETS.items() if v == hex(mark_value)), "未知")
-                        return {
-                            "outlet": outlet,
-                            "expires": expires,
-                            "mark": mark_value
-                        }
-        return None
-    except (subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError) as e:
-        app.logger.error(f"获取nftables记录失败: {e}")
-        return None
+# --- Routes ---
 
 @app.route("/", methods=["GET"])
 def index():
-    ip = get_client_ip()
-    hostname = get_hostname_from_ip(ip)
-    record = get_nft_map_entry(ip)
+    ip, hostname = get_client_info()
+    entry = nft.get_entry(ip)
     
-    current_outlet = record.get("outlet", "默认") if record else "默认"
-    expires_seconds = record.get("expires") if record else None
-    
-    return render_template("index.html.j2", ip=ip, hostname=hostname, current_outlet=current_outlet,
-                          expires_seconds=expires_seconds, outlets=OUTLETS.keys(), time_limits=TIME_LIMITS)
+    return render_template(
+        "index.html.j2",
+        ip=ip,
+        hostname=hostname,
+        current_outlet=entry.outlet if entry else "默认",
+        expires_seconds=entry.expires if entry else None,
+        outlets=CONFIG.outlets.keys(),
+        time_limits=[(get_duration_label(t), t) for t in CONFIG.time_limits]
+    )
 
 @app.route("/open", methods=["POST"])
 def open_net():
-    ip = get_client_ip()
+    ip, _ = get_client_info()
     outlet = request.form.get("outlet")
-    hours = request.form.get("hours")
-    if not outlet or hours is None:
-        flash("请选择出口与时限")
-        return redirect(url_for("index"))
-        
-    # 验证 outlet 是否在允许的列表中
-    if outlet not in OUTLETS:
+    hours_str = request.form.get("hours")
+
+    if not outlet or outlet not in CONFIG.outlets:
         flash("无效的出口选择")
         return redirect(url_for("index"))
 
-    # 获取对应的标记值
-    mark = OUTLETS.get(outlet)
-    if not mark:
-        flash("出口配置错误")
-        return redirect(url_for("index"))
+    mark = CONFIG.outlets[outlet]
     
-    # 先删除可能存在的旧规则
     try:
-        subprocess.run(
-            [
-                "nft",
-                "delete",
-                "element",
-                CONFIG.nftables.family,
-                CONFIG.nftables.table,
-                CONFIG.nftables.map,
-                "{",
-                ip,
-                "}",
-            ],
-            capture_output=True,
-            check=False,
-        )
-    except subprocess.SubprocessError as e:
-        app.logger.warning(f"删除旧规则失败或规则不存在: {e}")
+        hours = int(hours_str) if hours_str else 0
+    except ValueError:
+        hours = 0
+
+    # Clean up old rule first
+    nft.delete_element(ip)
     
-    # 添加新规则
-    try:
-        if hours != "None" and hours is not None:
-            # 有时限的规则
-            try:
-                hours_int = int(hours)
-                cmd = [
-                    "nft",
-                    "add",
-                    "element",
-                    CONFIG.nftables.family,
-                    CONFIG.nftables.table,
-                    CONFIG.nftables.map,
-                    "{",
-                    f"{ip}",
-                    "timeout",
-                    f"{hours_int}h",
-                    ":",
-                    mark,
-                    "}",
-                ]
-                subprocess.run(cmd, capture_output=True, check=True)
-                flash(f"网络已开通：出口「{outlet}」，时限「{hours}小时」")
-            except (ValueError, TypeError):
-                flash("时限格式无效")
-                return redirect(url_for("index"))
-        else:
-            # 永久规则
-            cmd = [
-                "nft",
-                "add",
-                "element",
-                CONFIG.nftables.family,
-                CONFIG.nftables.table,
-                CONFIG.nftables.map,
-                "{",
-                f"{ip}",
-                ":",
-                mark,
-                "}",
-            ]
-            subprocess.run(cmd, capture_output=True, check=True)
-            flash(f"网络已开通：出口「{outlet}」，时限「永久」")
-    except subprocess.SubprocessError as e:
-        app.logger.error(f"添加nftables规则失败: {e}")
-        flash(f"设置网络出口失败: {str(e)}")
-    
+    if nft.add_element(ip, mark, hours):
+        duration = f"{hours}小时" if hours else "永久"
+        flash(f"网络已开通：出口「{outlet}」，时限「{duration}」")
+    else:
+        flash("设置网络出口失败")
+
     return redirect(url_for("index"))
 
 @app.route("/close", methods=["POST"])
 def close_net():
-    ip = get_client_ip()
-    try:
-        subprocess.run(
-            [
-                "nft",
-                "delete",
-                "element",
-                CONFIG.nftables.family,
-                CONFIG.nftables.table,
-                CONFIG.nftables.map,
-                "{",
-                ip,
-                "}",
-            ],
-            capture_output=True,
-            check=True,
-        )
+    ip, _ = get_client_info()
+    if nft.delete_element(ip):
         flash("网络已重置")
-    except subprocess.SubprocessError as e:
-        app.logger.error(f"删除nftables规则失败: {e}")
-        flash(f"重置网络失败: {str(e)}")
-    
+    else:
+        flash("重置网络失败")
     return redirect(url_for("index"))
 
 def main():
     app.run(
-        debug=CONFIG.flask.debug,
         host=CONFIG.flask.host,
         port=CONFIG.flask.port,
+        debug=CONFIG.flask.debug
     )
 
 if __name__ == "__main__":

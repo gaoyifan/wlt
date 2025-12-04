@@ -16,16 +16,4 @@ outlets:
   教育网出口: "0x4"
   CN2出口: "0x5"
 
-time_limits:
-  - label: "1小时"
-    hours: 1
-  - label: "4小时"
-    hours: 4
-  - label: "8小时"
-    hours: 8
-  - label: "24小时"
-    hours: 24
-  - label: "永久"
-    hours: null
-
-
+time_limits: [1, 4, 8, 24, 0]  # 1小时, 4小时, 8小时, 24小时, 永久
