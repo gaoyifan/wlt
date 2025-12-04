@@ -131,10 +131,6 @@ class NftHandler:
             if res.returncode == 0:
                 return True
             
-            # Treat "No such file or directory" as success (idempotent delete)
-            if "No such file or directory" in res.stderr:
-                return True
-                
             logger.error(f"Error deleting rule for {ip}: {res.stderr}")
             return False
         except subprocess.SubprocessError as e:
