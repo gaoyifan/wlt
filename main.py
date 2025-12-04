@@ -127,8 +127,16 @@ class NftHandler:
     def delete_element(self, ip: str) -> bool:
         try:
             # Check=False because it might not exist
-            self._run(["delete", "element", self.cfg.family, self.cfg.table, self.cfg.map_name, "{", ip, "}"], check=False)
-            return True
+            res = self._run(["delete", "element", self.cfg.family, self.cfg.table, self.cfg.map_name, "{", ip, "}"], check=False)
+            if res.returncode == 0:
+                return True
+            
+            # Treat "No such file or directory" as success (idempotent delete)
+            if "No such file or directory" in res.stderr:
+                return True
+                
+            logger.error(f"Error deleting rule for {ip}: {res.stderr}")
+            return False
         except subprocess.SubprocessError as e:
             logger.error(f"Error deleting rule for {ip}: {e}")
             return False
@@ -188,9 +196,15 @@ def open_net():
     mark = CONFIG.outlets[outlet]
     
     try:
-        hours = int(hours_str) if hours_str else 0
+        # Validate hours input
+        if hours_str is None:
+            raise ValueError("Missing hours")
+        hours = int(hours_str)
+        if hours not in CONFIG.time_limits:
+            raise ValueError("Invalid hours value")
     except ValueError:
-        hours = 0
+        flash("无效的时限选择")
+        return redirect(url_for("index"))
 
     # Clean up old rule first
     nft.delete_element(ip)
