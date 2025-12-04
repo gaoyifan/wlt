@@ -5,12 +5,11 @@ services:
     build:
       context: .
       network: host
+    image: ghcr.io/gaoyifan/wlt:latest
     container_name: wlt
+    volumes:
+      - ./config.yml:/app/config.yml
     network_mode: host
     cap_add:
       - NET_ADMIN
     restart: unless-stopped
-    environment:
-      - SECRET_KEY=change_this_in_production
-      - WLT_HOST=100.65.1.254
-      - WLT_PORT=80 

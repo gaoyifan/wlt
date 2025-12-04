@@ -1,21 +1,81 @@
-from flask import Flask, request, render_template, redirect, url_for, flash
-import os
 import json
-import subprocess
+import os
 import socket
+import subprocess
+from typing import Dict, List, Tuple
+
+import yaml
+from flask import Flask, flash, redirect, render_template, request, url_for
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev_key_for_testing')  # 添加密钥配置
 
-# 出口配置
-OUTLETS = {
-    "国内出口": "0x1",
-    "国际出口": "0x2",
-    "科大出口": "0x3",
-    "Maple":    "0x4",
-}
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.yml")
 
-TIME_LIMITS = [("1小时", 1), ("4小时", 4), ("8小时", 8), ("24小时", 24), ("永久", None)]
+
+class FlaskConfig(BaseModel):
+    secret_key: str = "dev_key_for_testing"
+    host: str = "0.0.0.0"
+    port: int = 80
+    debug: bool = True
+
+
+class NftablesConfig(BaseModel):
+    family: str = "inet"
+    table: str = "wlt"
+    map: str = "src2mark"
+
+
+class TimeLimit(BaseModel):
+    label: str
+    hours: int | None = None
+
+
+class AppConfig(BaseModel):
+    flask: FlaskConfig = Field(default_factory=FlaskConfig)
+    nftables: NftablesConfig = Field(default_factory=NftablesConfig)
+    outlets: Dict[str, str]
+    time_limits: List[TimeLimit]
+
+    @field_validator("outlets")
+    @classmethod
+    def validate_outlets(cls, value: Dict[str, str]) -> Dict[str, str]:
+        if not value:
+            raise ValueError("outlets 至少需要一个条目")
+        return value
+
+    @field_validator("time_limits")
+    @classmethod
+    def validate_time_limits(cls, value: List[TimeLimit]) -> List[TimeLimit]:
+        if not value:
+            raise ValueError("time_limits 不能为空")
+        return value
+
+
+def load_config(path: str = CONFIG_PATH) -> AppConfig:
+    """Load YAML config and validate via Pydantic."""
+    try:
+        with open(path, "r", encoding="utf-8") as config_file:
+            loaded = yaml.safe_load(config_file) or {}
+    except FileNotFoundError as err:
+        raise RuntimeError(f"找不到配置文件: {path}") from err
+    except yaml.YAMLError as err:
+        raise RuntimeError(f"解析配置文件失败: {err}") from err
+
+    try:
+        return AppConfig.model_validate(loaded)
+    except ValidationError as err:
+        raise RuntimeError(f"配置文件字段验证失败: {err}") from err
+
+
+CONFIG = load_config()
+
+app.secret_key = CONFIG.flask.secret_key
+
+OUTLETS = CONFIG.outlets
+TIME_LIMITS: List[Tuple[str, int | None]] = [
+    (limit.label, limit.hours) for limit in CONFIG.time_limits
+]
 
 def get_client_ip() -> str:
     """取客户端IP地址"""
@@ -34,8 +94,18 @@ def get_nft_map_entry(ip):
     """获取指定IP在nftables中的记录"""
     try:
         result = subprocess.run(
-            ["nft", "--json", "list", "map", "inet", "wlt", "src2mark"],
-            capture_output=True, text=True, check=True
+            [
+                "nft",
+                "--json",
+                "list",
+                "map",
+                CONFIG.nftables.family,
+                CONFIG.nftables.table,
+                CONFIG.nftables.map,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         )
         data = json.loads(result.stdout)
         
@@ -105,8 +175,19 @@ def open_net():
     # 先删除可能存在的旧规则
     try:
         subprocess.run(
-            ["nft", "delete", "element", "inet", "wlt", "src2mark", "{", ip, "}"],
-            capture_output=True, check=False
+            [
+                "nft",
+                "delete",
+                "element",
+                CONFIG.nftables.family,
+                CONFIG.nftables.table,
+                CONFIG.nftables.map,
+                "{",
+                ip,
+                "}",
+            ],
+            capture_output=True,
+            check=False,
         )
     except subprocess.SubprocessError as e:
         app.logger.warning(f"删除旧规则失败或规则不存在: {e}")
@@ -117,8 +198,21 @@ def open_net():
             # 有时限的规则
             try:
                 hours_int = int(hours)
-                cmd = ["nft", "add", "element", "inet", "wlt", "src2mark", 
-                       "{", f"{ip}", "timeout", f"{hours_int}h", ":", mark, "}"]
+                cmd = [
+                    "nft",
+                    "add",
+                    "element",
+                    CONFIG.nftables.family,
+                    CONFIG.nftables.table,
+                    CONFIG.nftables.map,
+                    "{",
+                    f"{ip}",
+                    "timeout",
+                    f"{hours_int}h",
+                    ":",
+                    mark,
+                    "}",
+                ]
                 subprocess.run(cmd, capture_output=True, check=True)
                 flash(f"网络已开通：出口「{outlet}」，时限「{hours}小时」")
             except (ValueError, TypeError):
@@ -126,8 +220,19 @@ def open_net():
                 return redirect(url_for("index"))
         else:
             # 永久规则
-            cmd = ["nft", "add", "element", "inet", "wlt", "src2mark", 
-                   "{", f"{ip}", ":", mark, "}"]
+            cmd = [
+                "nft",
+                "add",
+                "element",
+                CONFIG.nftables.family,
+                CONFIG.nftables.table,
+                CONFIG.nftables.map,
+                "{",
+                f"{ip}",
+                ":",
+                mark,
+                "}",
+            ]
             subprocess.run(cmd, capture_output=True, check=True)
             flash(f"网络已开通：出口「{outlet}」，时限「永久」")
     except subprocess.SubprocessError as e:
@@ -141,8 +246,19 @@ def close_net():
     ip = get_client_ip()
     try:
         subprocess.run(
-            ["nft", "delete", "element", "inet", "wlt", "src2mark", "{", ip, "}"],
-            capture_output=True, check=True
+            [
+                "nft",
+                "delete",
+                "element",
+                CONFIG.nftables.family,
+                CONFIG.nftables.table,
+                CONFIG.nftables.map,
+                "{",
+                ip,
+                "}",
+            ],
+            capture_output=True,
+            check=True,
         )
         flash("网络已重置")
     except subprocess.SubprocessError as e:
@@ -152,9 +268,11 @@ def close_net():
     return redirect(url_for("index"))
 
 def main():
-    host = os.environ.get('WLT_HOST', '0.0.0.0')
-    port = int(os.environ.get('WLT_PORT', 80))
-    app.run(debug=True, host=host, port=port)
+    app.run(
+        debug=CONFIG.flask.debug,
+        host=CONFIG.flask.host,
+        port=CONFIG.flask.port,
+    )
 
 if __name__ == "__main__":
     main()
