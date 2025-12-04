@@ -1,19 +1,22 @@
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y nftables && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nftables \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
-RUN PYTHONDONTWRITEBYTECODE=1 pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-COPY main.py ./
-COPY templates/ ./templates/
+COPY . .
 
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 ENV WLT_HOST=0.0.0.0
 ENV WLT_PORT=80
 ENV FLASK_APP=main.py
 
 EXPOSE 80
 
-CMD ["python", "main.py"] 
+CMD ["python", "main.py"]
