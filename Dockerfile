@@ -9,14 +9,9 @@ RUN apt-get update \
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY main.py templates/ ./
-
-ENV VIRTUAL_ENV=/app/.venv
-ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
-ENV WLT_HOST=0.0.0.0
-ENV WLT_PORT=80
-ENV FLASK_APP=main.py
+COPY main.py ./
+COPY templates/ ./templates/
 
 EXPOSE 80
 
-CMD ["python", "main.py"]
+CMD ["uv", "run", "gunicorn", "-b", "0.0.0.0:80", "main:app"]

@@ -4,7 +4,6 @@ services:
   wlt:
     build:
       context: .
-      network: host
     image: ghcr.io/gaoyifan/wlt:latest
     container_name: wlt
     volumes:

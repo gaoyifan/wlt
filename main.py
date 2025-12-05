@@ -21,7 +21,7 @@ class FlaskConfig(BaseModel):
 class NftablesConfig(BaseModel):
     family: str = "inet"
     table: str = "wlt"
-    map_name: str = Field("src2mark", alias="map")
+    map: str = "src2mark"
 
 class AppConfig(BaseModel):
     flask: FlaskConfig = Field(default_factory=FlaskConfig)
@@ -90,7 +90,7 @@ class NftHandler:
 
     def get_entry(self, ip: str) -> Optional[NftEntry]:
         try:
-            data = self._json_cmd(["list", "map", self.cfg.family, self.cfg.table, self.cfg.map_name])
+            data = self._json_cmd(["list", "map", self.cfg.family, self.cfg.table, self.cfg.map])
             
             # Navigate JSON structure: {"nftables": [..., {"map": {"elem": [...]}}]}
             nftables = data.get("nftables", [])
@@ -127,7 +127,7 @@ class NftHandler:
     def delete_element(self, ip: str) -> bool:
         try:
             # Check=False because it might not exist
-            res = self._run(["delete", "element", self.cfg.family, self.cfg.table, self.cfg.map_name, "{", ip, "}"], check=False)
+            res = self._run(["delete", "element", self.cfg.family, self.cfg.table, self.cfg.map, "{", ip, "}"], check=False)
             if res.returncode == 0:
                 return True
             
@@ -145,7 +145,7 @@ class NftHandler:
             else:
                 elem_spec = [f"{ip}", ":", mark]
             
-            cmd = ["add", "element", self.cfg.family, self.cfg.table, self.cfg.map_name, "{"] + elem_spec + ["}"]
+            cmd = ["add", "element", self.cfg.family, self.cfg.table, self.cfg.map, "{"] + elem_spec + ["}"]
             self._run(cmd)
             return True
         except subprocess.SubprocessError as e:
