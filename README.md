@@ -1,3 +1,14 @@
+<!-- Keep these links. Translations will automatically update with the README. -->
+[Deutsch](https://zdoc.app/de/gaoyifan/wlt) | 
+[English](https://zdoc.app/en/gaoyifan/wlt) | 
+[Español](https://zdoc.app/es/gaoyifan/wlt) | 
+[français](https://zdoc.app/fr/gaoyifan/wlt) | 
+[日本語](https://zdoc.app/ja/gaoyifan/wlt) | 
+[한국어](https://zdoc.app/ko/gaoyifan/wlt) | 
+[Português](https://zdoc.app/pt/gaoyifan/wlt) | 
+[Русский](https://zdoc.app/ru/gaoyifan/wlt) | 
+[中文](https://zdoc.app/zh/gaoyifan/wlt)
+
 # 网络通 (wlt)
 
 网络通是一个基于 Python Flask 和 Nftables 的轻量级网络出口管理器。复刻自 [wlt.ustc.edu.cn](http://wlt.ustc.edu.cn)。
