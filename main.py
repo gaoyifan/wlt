@@ -49,6 +49,7 @@ class AppConfig(BaseModel):
 # --- Globals & Setup ---
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)
 logging.basicConfig(level=logging.INFO)
 logger = app.logger
 
