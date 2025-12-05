@@ -1,0 +1,20 @@
+[project]
+name = "wlt"
+version = "0.1.0"
+description = "Flask interface for managing nftables-based network access"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.1.1",
+    "pyyaml>=6.0,<7",
+    "pydantic>=2.9.2",
+    "gunicorn>=23.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "autoflake>=2.3.1",
+    "black>=25.11.0",
+    "isort>=7.0.0",
+]
+
+

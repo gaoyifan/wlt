@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>网络通</title>
+    <style>
+        :root {
+            --primary: #4361ee;
+            --primary-hover: #3a56d4;
+            --danger: #ef476f;
+            --danger-hover: #d63d63;
+            --success: #06d6a0;
+            --text: #2b2d42;
+            --text-light: #8d99ae;
+            --bg: #f8f9fa;
+            --card-bg: #ffffff;
+            --border: #e9ecef;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background-color: var(--bg);
+            padding: 0;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background-color: var(--primary);
+            color: white;
+            padding: 20px 0;
+            text-align: center;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.8rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .info-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .info-label {
+            font-weight: 600;
+            width: 100px;
+            color: var(--text-light);
+        }
+
+        .info-value {
+            font-weight: 500;
+        }
+
+        .info-value.highlight {
+            color: var(--primary);
+        }
+
+        h2 {
+            font-size: 1.2rem;
+            margin: 15px 0 10px;
+            color: var(--text);
+        }
+
+        .option-group {
+            margin-bottom: 20px;
+        }
+
+        .radio-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .radio-item {
+            position: relative;
+        }
+
+        .radio-item input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+        }
+
+        .radio-item label {
+            display: block;
+            padding: 10px 15px;
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .radio-item input[type="radio"]:checked+label {
+            background-color: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .btn {
+            display: inline-block;
+            font-weight: 500;
+            text-align: center;
+            white-space: nowrap;
+            vertical-align: middle;
+            user-select: none;
+            border: 1px solid transparent;
+            padding: 10px 20px;
+            font-size: 1rem;
+            line-height: 1.5;
+            border-radius: 6px;
+            transition: all 0.15s ease-in-out;
+            cursor: pointer;
+            margin-top: 15px;
+            width: 100%;
+        }
+
+        .btn-primary {
+            color: #fff;
+            background-color: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--primary-hover);
+            border-color: var(--primary-hover);
+        }
+
+        .btn-danger {
+            color: #fff;
+            background-color: var(--danger);
+            border-color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background-color: var(--danger-hover);
+            border-color: var(--danger-hover);
+        }
+
+        .flash-message {
+            padding: 12px;
+            background-color: rgba(6, 214, 160, 0.1);
+            border-left: 4px solid var(--success);
+            color: #2b2d42;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .actions form {
+            flex: 1;
+        }
+
+        @media (max-width: 480px) {
+            .radio-group {
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .actions {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>网络通</h1>
+    </header>
+
+    <div class="container">
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="flash-message">{{ messages[0] }}</div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="card">
+            <h2>当前信息</h2>
+            <div class="info-row">
+                <div class="info-label">IP 地址</div>
+                <div class="info-value">{{ ip }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">主机名</div>
+                <div class="info-value">{{ hostname }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">当前出口</div>
+                <div class="info-value highlight">{{ current_outlet }}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">剩余时间</div>
+                <div class="info-value" id="remaining-time">{{ expires_seconds and (expires_seconds | string + '秒') or
+                    '永久' }}</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <form method="post" action="{{ url_for('open_net') }}">
+                <div class="option-group">
+                    <h2>选择出口</h2>
+                    <div class="radio-group">
+                        {% for o in outlets %}
+                        <div class="radio-item">
+                            <input type="radio" name="outlet" id="outlet-{{ loop.index }}" value="{{ o }}" {% if
+                                o==current_outlet %}checked{% endif %}>
+                            <label for="outlet-{{ loop.index }}">{{ o }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="option-group">
+                    <h2>选择时限</h2>
+                    <div class="radio-group">
+                        {% for label, hour in time_limits %}
+                        <div class="radio-item">
+                            <input type="radio" name="hours" id="hours-{{ loop.index }}" value="{{ hour }}" {% if
+                                loop.first %}checked{% endif %}>
+                            <label for="hours-{{ loop.index }}">{{ label }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button type="submit" class="btn btn-primary">开通网络</button>
+            </form>
+
+            <form method="post" action="{{ url_for('close_net') }}">
+                <button type="submit" class="btn btn-danger">重置网络</button>
+            </form>
+        </div>
+    </div>
+    </div>
+
+    <script>
+        // 初始化剩余时间（秒）
+        let remainingSeconds = {{ expires_seconds or 'null' }};
+
+
+        function formatTime(seconds) {
+            if (seconds === null || seconds === undefined) {
+                return '永久';
+            }
+
+            if (seconds <= 0) {
+                return '已过期';
+            }
+
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+
+            if (hours > 0) {
+                return `${hours}小时${minutes}分钟${secs}秒`;
+            } else if (minutes > 0) {
+                return `${minutes}分钟${secs}秒`;
+            } else {
+                return `${secs}秒`;
+            }
+        }
+
+        function updateRemainingTime() {
+            const timeElement = document.getElementById('remaining-time');
+
+            if (remainingSeconds === null) {
+                timeElement.textContent = '永久';
+                return;
+            }
+
+            if (remainingSeconds <= 0) {
+                timeElement.textContent = '已过期';
+                timeElement.style.color = '#ef476f'; // 红色显示过期
+                return;
+            }
+
+            timeElement.textContent = formatTime(remainingSeconds);
+            remainingSeconds--;
+        }
+
+        // 页面加载时立即更新一次
+        updateRemainingTime();
+
+        // 每秒更新一次（仅在有时限时）
+        if (remainingSeconds !== null) {
+            setInterval(updateRemainingTime, 1000);
+        }
+    </script>
+</body>
+
+</html>

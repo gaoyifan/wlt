@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  wlt:
+    build:
+      context: .
+    image: ghcr.io/gaoyifan/wlt:latest
+    container_name: wlt
+    volumes:
+      - ./config.yml:/app/config.yml
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
