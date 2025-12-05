@@ -134,7 +134,13 @@ class NftHandler:
 
     def delete_element(self, ip: str) -> bool:
         try:
-            # Check=False because it might not exist
+            # Check if element exists first
+            entry = self.get_entry(ip)
+            if entry is None:
+                # Element doesn't exist, return success directly
+                return True
+
+            # Element exists, proceed with deletion
             res = self._run(["delete", "element", self.cfg.family, self.cfg.table, self.cfg.map, "{", ip, "}"], check=False)
             if res.returncode == 0:
                 return True
