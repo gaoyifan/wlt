@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 class FlaskConfig(BaseModel):
-    secret_key: str = "dev_key_for_testing"
     host: str = "0.0.0.0"
     port: int = 80
     debug: bool = True
@@ -66,7 +65,6 @@ def load_config(path: str = "config.yml") -> AppConfig:
 
 
 CONFIG = load_config()
-app.secret_key = CONFIG.flask.secret_key
 
 # --- Helpers ---
 
