@@ -113,6 +113,6 @@ docker compose up -d
 2.  **路由配置**：请务必确保你的 Linux 系统已经配置了对应的 `ip rule` 和 `ip route`。
     *   示例：`ip rule add fwmark 0x1 table 100` (表 100 包含走电信的默认路由)
 
-## 📄 License
+## License
 
 MIT
