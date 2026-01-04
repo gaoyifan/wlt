@@ -12,4 +12,4 @@ COPY templates/ ./templates/
 
 EXPOSE 80
 
-CMD ["uv", "run", "gunicorn", "-b", "0.0.0.0:80", "main:app"]
+CMD ["uv", "run", "gunicorn", "-c", "python:main", "main:app"]

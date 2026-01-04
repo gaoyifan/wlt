@@ -67,6 +67,9 @@ def load_config(path: str = "config.yml") -> AppConfig:
 
 CONFIG = load_config()
 
+# Gunicorn can load this module as a config source via `-c python:main`.
+bind = f"{CONFIG.flask.host}:{CONFIG.flask.port}"
+
 # --- Helpers ---
 
 
