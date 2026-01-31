@@ -24,17 +24,30 @@ class NftablesConfig(BaseModel):
     map: str = "src2mark"
 
 
-class AppConfig(BaseModel):
-    flask: FlaskConfig = Field(default_factory=FlaskConfig)
-    nftables: NftablesConfig = Field(default_factory=NftablesConfig)
-    outlets: Dict[str, str]
-    time_limits: List[int]
+class OutletGroup(BaseModel):
+    title: str
+    mask: int
+    outlets: Dict[str, int]
 
     @field_validator("outlets")
     @classmethod
-    def validate_outlets(cls, v: Dict[str, str]) -> Dict[str, str]:
+    def validate_outlets(cls, v: Dict[str, int]) -> Dict[str, int]:
         if not v:
-            raise ValueError("outlets cannot be empty")
+            raise ValueError("outlet_groups.outlets cannot be empty")
+        return v
+
+
+class AppConfig(BaseModel):
+    flask: FlaskConfig = Field(default_factory=FlaskConfig)
+    nftables: NftablesConfig = Field(default_factory=NftablesConfig)
+    outlet_groups: List[OutletGroup]
+    time_limits: List[int]
+
+    @field_validator("outlet_groups")
+    @classmethod
+    def validate_outlet_groups(cls, v: List[OutletGroup]) -> List[OutletGroup]:
+        if not v:
+            raise ValueError("outlet_groups cannot be empty")
         return v
 
     @field_validator("time_limits")
@@ -78,18 +91,23 @@ def get_duration_label(hours: int) -> str:
     return "永久" if hours == 0 else f"{hours}小时"
 
 
+def get_group_selection(mark_value: int, group: OutletGroup) -> Optional[str]:
+    masked_value = mark_value & group.mask
+    for name, value in group.outlets.items():
+        if (value & group.mask) == masked_value:
+            return name
+    return None
+
+
 @dataclass
 class NftEntry:
-    outlet: str
-    mark: str
+    mark: int
     expires: Optional[int] = None
 
 
 class NftHandler:
-    def __init__(self, config: NftablesConfig, outlets: Dict[str, str]):
+    def __init__(self, config: NftablesConfig):
         self.cfg = config
-        self.outlets = outlets
-        self.rev_outlets = {v: k for k, v in outlets.items()}
 
     def _run(self, args: List[str], check: bool = True) -> subprocess.CompletedProcess:
         cmd = ["nft"] + args
@@ -129,8 +147,8 @@ class NftHandler:
                     matched_ip = elem_key
 
                 if matched_ip == ip:
-                    outlet_name = self.rev_outlets.get(hex(mark_val) if isinstance(mark_val, int) else mark_val, "未知")
-                    return NftEntry(outlet=outlet_name, mark=str(mark_val), expires=expires)
+                    mark = mark_val if isinstance(mark_val, int) else int(str(mark_val), 0)
+                    return NftEntry(mark=mark, expires=expires)
 
         except (subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError) as e:
             logger.error(f"Failed to fetch nftables entry for {ip}: {e}")
@@ -171,7 +189,7 @@ class NftHandler:
             return False
 
 
-nft = NftHandler(CONFIG.nftables, CONFIG.outlets)
+nft = NftHandler(CONFIG.nftables)
 
 
 def get_client_info() -> tuple[str, str]:
@@ -190,14 +208,34 @@ def get_client_info() -> tuple[str, str]:
 def index():
     ip, hostname = get_client_info()
     entry = nft.get_entry(ip)
+    mark_value = entry.mark if entry else None
+
+    outlet_groups = []
+    current_labels = []
+    for idx, group in enumerate(CONFIG.outlet_groups):
+        selection = get_group_selection(mark_value, group) if mark_value is not None else None
+        if selection:
+            current_labels.append(selection)
+        outlet_groups.append(
+            {
+                "title": group.title,
+                "field": f"group_{idx}",
+                "options": list(group.outlets.keys()),
+                "selected": selection or next(iter(group.outlets.keys())),
+            }
+        )
+
+    current_outlet = "默认"
+    if mark_value is not None:
+        current_outlet = " + ".join(current_labels) if current_labels else hex(mark_value)
 
     return render_template(
         "index.html.j2",
         ip=ip,
         hostname=hostname,
-        current_outlet=entry.outlet if entry else "默认",
+        current_outlet=current_outlet,
         expires_seconds=entry.expires if entry else None,
-        outlets=CONFIG.outlets.keys(),
+        outlet_groups=outlet_groups,
         time_limits=[(get_duration_label(t), t) for t in CONFIG.time_limits],
     )
 
@@ -205,14 +243,18 @@ def index():
 @app.route("/open", methods=["POST"])
 def open_net():
     ip, _ = get_client_info()
-    outlet = request.form.get("outlet")
     hours_str = request.form.get("hours")
 
-    if not outlet or outlet not in CONFIG.outlets:
-        flash("无效的出口选择")
-        return redirect(url_for("index"))
-
-    mark = CONFIG.outlets[outlet]
+    mark_value = 0
+    selected_labels = []
+    for idx, group in enumerate(CONFIG.outlet_groups):
+        field_name = f"group_{idx}"
+        outlet = request.form.get(field_name)
+        if not outlet or outlet not in group.outlets:
+            flash(f"无效的出口选择：{group.title}")
+            return redirect(url_for("index"))
+        selected_labels.append(outlet)
+        mark_value |= group.outlets[outlet] & group.mask
 
     try:
         # Validate hours input
@@ -228,9 +270,10 @@ def open_net():
     # Clean up old rule first
     nft.delete_element(ip)
 
-    if nft.add_element(ip, mark, hours):
+    if nft.add_element(ip, hex(mark_value), hours):
         duration = f"{hours}小时" if hours else "永久"
-        flash(f"网络已开通：出口「{outlet}」，时限「{duration}」")
+        outlet_label = " + ".join(selected_labels)
+        flash(f"网络已开通：出口「{outlet_label}」，时限「{duration}」")
     else:
         flash("设置网络出口失败")
 

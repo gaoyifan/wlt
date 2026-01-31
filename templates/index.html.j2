@@ -231,18 +231,20 @@
 
         <div class="card">
             <form method="post" action="{{ url_for('open_net') }}">
+                {% for group in outlet_groups %}
                 <div class="option-group">
-                    <h2>选择出口</h2>
+                    <h2>{{ group.title }}</h2>
                     <div class="radio-group">
-                        {% for o in outlets %}
+                        {% for o in group.options %}
                         <div class="radio-item">
-                            <input type="radio" name="outlet" id="outlet-{{ loop.index }}" value="{{ o }}" {% if
-                                o==current_outlet %}checked{% endif %}>
-                            <label for="outlet-{{ loop.index }}">{{ o }}</label>
+                            <input type="radio" name="{{ group.field }}" id="{{ group.field }}-{{ loop.index }}"
+                                value="{{ o }}" {% if o==group.selected %}checked{% endif %}>
+                            <label for="{{ group.field }}-{{ loop.index }}">{{ o }}</label>
                         </div>
                         {% endfor %}
                     </div>
                 </div>
+                {% endfor %}
 
                 <div class="option-group">
                     <h2>选择时限</h2>

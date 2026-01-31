@@ -10,9 +10,19 @@ family = "inet"
 table = "wlt"
 map = "src2mark"
 
-[outlets]
-"电信出口" = "0x1"
-"移动出口" = "0x2"
-"联通出口" = "0x3"
-"教育网出口" = "0x4"
-"CN2出口" = "0x5"
+[[outlet_groups]]
+title = "选择出口"
+mask = 0xFF
+[outlet_groups.outlets]
+"电信出口" = 0x1
+"移动出口" = 0x2
+"联通出口" = 0x3
+"教育网出口" = 0x4
+"CN2出口" = 0x5
+
+[[outlet_groups]]
+title = "路由策略"
+mask = 0xF00
+[outlet_groups.outlets]
+"默认" = 0x0
+"覆盖CN路由" = 0x100

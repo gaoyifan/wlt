@@ -76,11 +76,21 @@ cp config.example.toml config.toml
 编辑 `config.toml`：
 
 ```toml
-[outlets]
-电信出口 = "0x1"
-移动出口 = "0x2"
-
 time_limits = [1, 4, 8, 24, 0] # 0 代表永久
+
+[[outlet_groups]]
+title = "选择出口"
+mask = 0xFF
+[outlet_groups.outlets]
+电信出口 = 0x1
+移动出口 = 0x2
+
+[[outlet_groups]]
+title = "路由策略"
+mask = 0xF00
+[outlet_groups.outlets]
+默认 = 0x0
+覆盖CN路由 = 0x100
 ```
 
 #### 配置详解
@@ -93,7 +103,7 @@ time_limits = [1, 4, 8, 24, 0] # 0 代表永久
 | `nftables.family` | `inet` | Nftables 协议族 (inet/ip/ip6) |
 | `nftables.table` | `wlt` | Nftables 表名 |
 | `nftables.map` | `src2mark` | 存储 IP 映射关系的 Map 名 |
-| `outlets` | **(必填)** | 出口名称与 fwmark 值的映射字典 |
+| `outlet_groups` | **(必填)** | 出口组列表，包含 `title`、`mask` 和 `outlets` |
 | `time_limits` | **(必填)** | 可选时长列表（小时），`0` 表示永久 |
 
 ### 3. 启动服务
