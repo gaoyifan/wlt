@@ -3,10 +3,9 @@ import logging
 import os
 import socket
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-
-import yaml
 from flask import Flask, flash, redirect, render_template, request, url_for
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -54,13 +53,15 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 
 
-def load_config(path: str = "config.yml") -> AppConfig:
-    path = os.path.join(os.path.dirname(__file__), path)
+def load_config(path: str = "config.toml") -> AppConfig:
+    full_path = os.path.join(os.path.dirname(__file__), path)
+    if not os.path.exists(full_path):
+        raise RuntimeError("Failed to load config: config.toml not found.")
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        return AppConfig.model_validate(data)
-    except (FileNotFoundError, yaml.YAMLError, ValidationError) as e:
+        with open(full_path, "rb") as f:
+            data = tomllib.load(f)
+        return AppConfig.model_validate(data or {})
+    except (tomllib.TOMLDecodeError, ValidationError, OSError) as e:
         logger.error(f"Config error: {e}")
         raise RuntimeError(f"Failed to load config: {e}")
 

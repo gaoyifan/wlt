@@ -1,0 +1,18 @@
+time_limits = [1, 4, 8, 24, 0] # 1小时, 4小时, 8小时, 24小时, 永久
+
+[flask]
+host = "0.0.0.0"
+port = 80
+debug = true
+
+[nftables]
+family = "inet"
+table = "wlt"
+map = "src2mark"
+
+[outlets]
+"电信出口" = "0x1"
+"移动出口" = "0x2"
+"联通出口" = "0x3"
+"教育网出口" = "0x4"
+"CN2出口" = "0x5"

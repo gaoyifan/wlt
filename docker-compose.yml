@@ -7,7 +7,7 @@ services:
     image: ghcr.io/gaoyifan/wlt:latest
     container_name: wlt
     volumes:
-      - ./config.yml:/app/config.yml
+      - ./config.toml:/app/config.toml
     network_mode: host
     cap_add:
       - NET_ADMIN

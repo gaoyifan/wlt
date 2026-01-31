@@ -70,17 +70,17 @@ nft -f nft/demo.nft
 复制示例配置并修改：
 
 ```bash
-cp config.example.yml config.yml
+cp config.example.toml config.toml
 ```
 
-编辑 `config.yml`：
+编辑 `config.toml`：
 
-```yaml
-outlets:
-  电信出口: "0x1"
-  移动出口: "0x2"
+```toml
+[outlets]
+电信出口 = "0x1"
+移动出口 = "0x2"
 
-time_limits: [1, 4, 8, 24, 0] # 0 代表永久
+time_limits = [1, 4, 8, 24, 0] # 0 代表永久
 ```
 
 #### 配置详解
