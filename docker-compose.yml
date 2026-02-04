@@ -10,3 +10,28 @@ services:
     cap_add:
       - NET_ADMIN
     restart: unless-stopped
+  wlt-https:
+    image: ghcr.io/gaoyifan/wlt:latest
+    container_name: wlt-https
+    profiles:
+      - tls
+    volumes:
+      - ./config.toml:/app/config.toml
+      - /etc/ssl/private/yfgao:/etc/ssl/private/yfgao:ro
+    command:
+      - uv
+      - run
+      - gunicorn
+      - -c
+      - python:main
+      - -b
+      - 0.0.0.0:443
+      - --certfile
+      - /etc/ssl/private/yfgao/fullchain.pem
+      - --keyfile
+      - /etc/ssl/private/yfgao/privkey.pem
+      - main:app
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
