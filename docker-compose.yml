@@ -20,7 +20,7 @@ services:
       - wlt-ssh-data:/data
     environment:
       SSH_HOST_KEY: /data/ssh_host_key
-    command: ["uv", "run", "python", "ssh_server.py"]
+    command: ["uv", "run", "wlt-ssh"]
     network_mode: host
     cap_add:
       - NET_ADMIN
@@ -38,14 +38,14 @@ services:
       - run
       - gunicorn
       - -c
-      - python:main
+      - python:wlt.web
       - -b
       - 0.0.0.0:443
       - --certfile
       - /etc/ssl/private/yfgao/fullchain.pem
       - --keyfile
       - /etc/ssl/private/yfgao/privkey.pem
-      - main:app
+      - wlt.web:app
     network_mode: host
     cap_add:
       - NET_ADMIN

@@ -1,7 +1,7 @@
 [project]
 name = "wlt"
-version = "1.0.2"
-description = "Flask interface for managing nftables-based network access"
+version = "1.1.0"
+description = "Web and SSH interface for managing nftables-based network access"
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.1.1",
@@ -9,6 +9,14 @@ dependencies = [
     "gunicorn>=23.0.0",
     "asyncssh>=2.21.0",
 ]
+
+[project.scripts]
+wlt-web = "wlt.web:main"
+wlt-ssh = "wlt.ssh:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [

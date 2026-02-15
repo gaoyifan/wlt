@@ -7,9 +7,10 @@ RUN apk add --no-cache nftables
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY main.py ssh_server.py ./
+COPY wlt/ ./wlt/
 COPY templates/ ./templates/
+RUN uv sync --frozen --no-dev
 
 EXPOSE 80 2222
 
-CMD ["uv", "run", "gunicorn", "-c", "python:main", "main:app"]
+CMD ["uv", "run", "gunicorn", "-c", "python:wlt.web", "wlt.web:app"]
