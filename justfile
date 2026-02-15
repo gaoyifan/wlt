@@ -3,3 +3,6 @@ default:
     docker compose up -d --wait
     sleep 10
     curl 100.64.110.254
+
+up:
+    docker compose --profile tls --profile ssh up -d

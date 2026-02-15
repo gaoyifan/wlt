@@ -14,6 +14,7 @@ CYAN = "\033[36m"
 GREEN = "\033[32m"
 RED = "\033[31m"
 RST = "\033[0m"
+KEYS = "1234567890abcdefghijklmnopqrstuvwxyz"
 
 
 async def handle_client(process: asyncssh.SSHServerProcess):
@@ -24,60 +25,58 @@ async def handle_client(process: asyncssh.SSHServerProcess):
         hostname = ip
     log.info("Connected: %s (%s)", ip, hostname)
 
-    def w(s=""):
-        process.stdout.write(s + "\r\n")
+    def show(text):
+        process.stdout.write(text.replace("\n", "\r\n"))
 
     async def key():
         return (await process.stdin.read(1)) or None
 
+    def menu(title, items):
+        keys = KEYS[:len(items)]
+        opts = "\n".join(f"    {k}. {name}" for k, name in zip(keys, items))
+        return f"  {BOLD}{title}{RST}\n{opts}\n\n  选择 [{keys}] q=返回: "
+
     async def pick(title, items):
-        w(f"  {BOLD}{title}{RST}")
-        for i, name in enumerate(items, 1):
-            w(f"    {i}. {name}")
-        w()
-        n = len(items)
-        process.stdout.write(f"  选择 [1-{n}]: ")
+        show(menu(title, items))
+        keys = KEYS[:len(items)]
         while True:
             ch = await key()
             if not ch or ch in "qQ\x03":
                 return None
-            if ch.isdigit() and 1 <= int(ch) <= n:
-                w(ch)
-                return int(ch) - 1
+            ch = ch.lower()
+            if ch in keys:
+                show(ch + "\n\n")
+                return keys.index(ch)
 
     try:
         while True:
-            process.stdout.write("\033[2J\033[H")
-            w(f"  {BOLD}网络通{RST}")
-            w()
             entry = await asyncio.to_thread(nft.get_entry, ip)
-            w(f"  IP: {ip} ({hostname})")
             if entry:
                 labels = [s for g in CONFIG.outlet_groups if (s := get_group_selection(entry.mark, g))]
                 outlet = " + ".join(labels) if labels else hex(entry.mark)
                 expires = "永久" if entry.expires is None else f"{entry.expires}秒"
-                w(f"  当前出口: {CYAN}{outlet}{RST}")
-                w(f"  剩余时间: {expires}")
+                status = f"  当前出口: {CYAN}{outlet}{RST}\n  剩余时间: {expires}"
             else:
-                w(f"  当前出口: {DIM}默认{RST}")
-            w()
-            w(f"  {BOLD}[O]{RST} 开通  {BOLD}[R]{RST} 重置  {BOLD}[Q]{RST} 退出")
-            w()
-            process.stdout.write("  请选择: ")
+                status = f"  当前出口: {DIM}默认{RST}"
+            show(f"\033[2J\033[H\n"
+                 f"  {BOLD}网络通{RST}\n\n"
+                 f"  IP: {ip} ({hostname})\n"
+                 f"{status}\n\n"
+                 f"  {BOLD}[1]{RST} 开通  {BOLD}[2]{RST} 重置  {BOLD}[q]{RST} 退出\n\n"
+                 f"  请选择: ")
+
             ch = await key()
             if not ch or ch in "qQ\x03":
                 break
-            if ch in "rR":
+            if ch == "2":
                 await asyncio.to_thread(nft.delete_element, ip)
-                w()
-                w()
-                w(f"  {GREEN}网络已重置{RST}")
+                show(f"\n\n  {GREEN}网络已重置{RST}\n")
                 await asyncio.sleep(1)
                 continue
-            if ch not in "oO":
+            if ch != "1":
                 continue
-            w()
-            w()
+            show("\n\n")
+
             selections = []
             for group in CONFIG.outlet_groups:
                 names = list(group.outlets.keys())
@@ -85,14 +84,14 @@ async def handle_client(process: asyncssh.SSHServerProcess):
                 if idx is None:
                     break
                 selections.append((group, names[idx]))
-                w()
             if len(selections) != len(CONFIG.outlet_groups):
                 continue
-            time_labels = [get_duration_label(h) for h in CONFIG.time_limits]
-            idx = await pick("选择时限", time_labels)
+
+            idx = await pick("选择时限", [get_duration_label(h) for h in CONFIG.time_limits])
             if idx is None:
                 continue
             hours = CONFIG.time_limits[idx]
+
             mark_value = 0
             labels = []
             for group, name in selections:
@@ -100,11 +99,10 @@ async def handle_client(process: asyncssh.SSHServerProcess):
                 labels.append(name)
             await asyncio.to_thread(nft.delete_element, ip)
             ok = await asyncio.to_thread(nft.add_element, ip, hex(mark_value), hours)
-            w()
             if ok:
-                w(f"  {GREEN}已开通：{' + '.join(labels)}，{get_duration_label(hours)}{RST}")
+                show(f"  {GREEN}已开通：{' + '.join(labels)}，{get_duration_label(hours)}{RST}\n")
             else:
-                w(f"  {RED}设置失败{RST}")
+                show(f"  {RED}设置失败{RST}\n")
             await asyncio.sleep(1.5)
     except Exception:
         pass
@@ -117,7 +115,7 @@ class NoAuthSSHServer(asyncssh.SSHServer):
 
 
 async def main():
-    key_path = os.path.join(os.path.dirname(__file__), "ssh_host_key")
+    key_path = os.environ.get("SSH_HOST_KEY", "ssh_host_key")
     if not os.path.exists(key_path):
         asyncssh.generate_private_key("ssh-rsa").write_private_key(key_path)
         log.info("Generated host key: %s", key_path)
@@ -125,6 +123,7 @@ async def main():
         NoAuthSSHServer, "", 2222,
         server_host_keys=[key_path],
         process_factory=handle_client,
+        line_editor=False,
     ):
         log.info("Listening on port 2222")
         await asyncio.Future()

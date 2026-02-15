@@ -17,6 +17,9 @@ services:
       - ssh
     volumes:
       - ./config.toml:/app/config.toml
+      - wlt-ssh-data:/data
+    environment:
+      SSH_HOST_KEY: /data/ssh_host_key
     command: ["uv", "run", "python", "ssh_server.py"]
     network_mode: host
     cap_add:
@@ -47,3 +50,5 @@ services:
     cap_add:
       - NET_ADMIN
     restart: unless-stopped
+volumes:
+  wlt-ssh-data:
