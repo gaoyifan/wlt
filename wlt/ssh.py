@@ -42,14 +42,14 @@ async def handle_client(process: asyncssh.SSHServerProcess):
     def menu(title, items):
         keys = KEYS[: len(items)]
         opts = "\n".join(f"    {k}. {name}" for k, name in zip(keys, items))
-        return f"  {BOLD}{title}{RST}\n{opts}\n\n  选择 [{keys}] q=返回: "
+        return f"  {BOLD}{title}{RST}\n{opts}\n\n  选择: "
 
     async def pick(title, items):
         show(menu(title, items))
         keys = KEYS[: len(items)]
         while True:
             ch = await key()
-            if not ch or ch in "qQ\x03":
+            if not ch or ch == "\x03":
                 return None
             ch = ch.lower()
             if ch in keys:
