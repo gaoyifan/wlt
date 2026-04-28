@@ -6,4 +6,4 @@ build:
     docker build . -t ghcr.io/gaoyifan/wlt:latest --network=host
 
 up:
-    docker compose --profile tls --profile ssh up -d --wait
+    docker compose --profile tls --profile ssh up -d --wait --force-recreate
