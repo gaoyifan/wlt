@@ -53,5 +53,17 @@ services:
     cap_add:
       - NET_ADMIN
     restart: unless-stopped
+  wlt-persist:
+    image: ghcr.io/gaoyifan/wlt:latest
+    container_name: wlt-persist
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+      - ./config.d:/app/config.d:ro
+      - /etc/nftables:/etc/nftables
+    command: ["uv", "run", "wlt-persist"]
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
 volumes:
   wlt-ssh-data:

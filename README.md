@@ -117,6 +117,23 @@ title = "海外出口"
 文件名排序靠后的配置覆盖。其他字典递归合并，普通列表（如
 `time_limits`）整体覆盖。非 `*.toml` 文件和子目录会被忽略。
 
+#### 持久化出口设置
+
+Compose 默认启动独立的 `wlt-persist` 服务，并将宿主机
+`/etc/nftables/` 挂载到容器。该服务每 5 分钟将 `src2mark` 保存到
+`/etc/nftables/wlt_src2mark.conf`，仅在内容变化时原子写入。
+
+在宿主机的 `/etc/nftables.conf` 中，必须在 `inet wlt` 表和
+`src2mark` map 创建完成后引用快照：
+
+```nft
+include "/etc/nftables/wlt_src2mark.conf"
+```
+
+限时元素会保存原始 timeout 和当前剩余 expires。nftables 或主机重启后，
+计时从最后保存的剩余时间继续；主机停机期间暂停计时。异常宕机最多丢失最近
+5 分钟内的设置变更。
+
 #### 配置详解
 
 | 配置项 | 默认值 | 说明 |

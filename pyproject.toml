@@ -13,6 +13,7 @@ dependencies = [
 [project.scripts]
 wlt-web = "wlt.web:main"
 wlt-ssh = "wlt.ssh:main"
+wlt-persist = "wlt.persist:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -24,5 +25,4 @@ dev = [
     "black>=25.11.0",
     "isort>=7.0.0",
 ]
-
 
