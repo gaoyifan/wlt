@@ -1,7 +1,9 @@
 import logging
 import os
 import tomllib
-from typing import Dict, List
+from copy import deepcopy
+from pathlib import Path
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -44,6 +46,9 @@ class AppConfig(BaseModel):
     def validate_outlet_groups(cls, v: List[OutletGroup]) -> List[OutletGroup]:
         if not v:
             raise ValueError("outlet_groups cannot be empty")
+        titles = [group.title for group in v]
+        if len(titles) != len(set(titles)):
+            raise ValueError("outlet_groups titles must be unique")
         return v
 
     @field_validator("time_limits")
@@ -54,14 +59,79 @@ class AppConfig(BaseModel):
         return v
 
 
-def load_config(path: str = "config.toml") -> AppConfig:
-    full_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), path)
-    if not os.path.exists(full_path):
-        raise RuntimeError("Failed to load config: config.toml not found.")
+def _load_toml(path: Path) -> Dict[str, Any]:
     try:
-        with open(full_path, "rb") as f:
-            data = tomllib.load(f)
+        with path.open("rb") as f:
+            return tomllib.load(f)
+    except (tomllib.TOMLDecodeError, OSError) as e:
+        logger.error("Config file error in %s: %s", path, e)
+        raise RuntimeError(f"Failed to load config file {path}: {e}") from e
+
+
+def _merge_outlet_groups(base: List[Any], override: List[Any]) -> List[Any]:
+    merged = deepcopy(base)
+    indexes = {
+        group["title"]: index
+        for index, group in enumerate(merged)
+        if isinstance(group, dict) and isinstance(group.get("title"), str)
+    }
+
+    for group in override:
+        title = group.get("title") if isinstance(group, dict) else None
+        if isinstance(title, str) and title in indexes:
+            index = indexes[title]
+            merged[index] = _deep_merge(merged[index], group)
+        else:
+            merged.append(deepcopy(group))
+            if isinstance(title, str):
+                indexes[title] = len(merged) - 1
+
+    return merged
+
+
+def _deep_merge(base: Any, override: Any, key: str | None = None) -> Any:
+    if key == "outlet_groups" and isinstance(base, list) and isinstance(override, list):
+        return _merge_outlet_groups(base, override)
+
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = deepcopy(base)
+        for child_key, value in override.items():
+            if child_key in merged:
+                merged[child_key] = _deep_merge(merged[child_key], value, child_key)
+            else:
+                merged[child_key] = deepcopy(value)
+        return merged
+
+    return deepcopy(override)
+
+
+def load_config(path: str = "config.toml") -> AppConfig:
+    full_path = Path(path)
+    if not full_path.is_absolute():
+        full_path = Path(os.path.dirname(os.path.dirname(__file__))) / full_path
+
+    if not full_path.is_file():
+        raise RuntimeError(f"Failed to load config: {full_path} not found.")
+
+    data: Dict[str, Any] = _load_toml(full_path)
+    config_dir = full_path.parent / "config.d"
+    if config_dir.exists() and not config_dir.is_dir():
+        raise RuntimeError(f"Failed to load config: {config_dir} is not a directory.")
+
+    if config_dir.is_dir():
+        config_files = sorted(
+            (
+                candidate
+                for candidate in config_dir.iterdir()
+                if candidate.is_file() and candidate.suffix == ".toml"
+            ),
+            key=lambda candidate: candidate.name,
+        )
+        for config_file in config_files:
+            data = _deep_merge(data, _load_toml(config_file))
+
+    try:
         return AppConfig.model_validate(data or {})
-    except (tomllib.TOMLDecodeError, ValidationError, OSError) as e:
+    except ValidationError as e:
         logger.error("Config error: %s", e)
-        raise RuntimeError(f"Failed to load config: {e}")
+        raise RuntimeError(f"Failed to validate merged config: {e}") from e

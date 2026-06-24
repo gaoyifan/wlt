@@ -93,6 +93,30 @@ mask = 0xF00
 覆盖CN路由 = 0x100
 ```
 
+#### 补充配置目录
+
+可以在 `config.d/` 中放置任意数量的 `*.toml` 补充配置。程序先读取
+`config.toml`，再按文件名字符序依次深合并，例如：
+
+```toml
+# config.d/10-extra-outlets.toml
+[[outlet_groups]]
+title = "国内出口"
+[outlet_groups.outlets]
+"测试出口1" = 0xff00
+"测试出口2" = 0xfe00
+
+[[outlet_groups]]
+title = "海外出口"
+[outlet_groups.outlets]
+"测试出口1" = 0xff
+"测试出口2" = 0xfe
+```
+
+`outlet_groups` 按 `title` 合并，组内的 `outlets` 按出口名称合并；同名值由
+文件名排序靠后的配置覆盖。其他字典递归合并，普通列表（如
+`time_limits`）整体覆盖。非 `*.toml` 文件和子目录会被忽略。
+
 #### 配置详解
 
 | 配置项 | 默认值 | 说明 |
