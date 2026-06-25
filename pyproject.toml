@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.9.2",
     "gunicorn>=23.0.0",
     "asyncssh>=2.21.0",
+    "dnspython>=2.8.0",
 ]
 
 [project.scripts]

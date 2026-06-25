@@ -152,9 +152,11 @@
                 body.innerHTML = `<p class="unavailable">无法连接 IPv${fam} 服务（本机可能不支持 IPv${fam}）。</p>`;
                 return;
             }
+            const hostRow = `<div class="info-row"><div class="info-label">主机名</div><div class="info-value">${esc(data.hostname || "-")}</div></div>`;
             if (!data.available) {
                 body.innerHTML = `
                     <div class="info-row"><div class="info-label">IP 地址</div><div class="info-value">${esc(data.ip)}</div></div>
+                    ${hostRow}
                     <p class="unavailable">本协议族（IPv${fam}）暂未启用出口选择。</p>`;
                 return;
             }
@@ -168,6 +170,7 @@
                 </div>`).join("");
             body.innerHTML = `
                 <div class="info-row"><div class="info-label">IP 地址</div><div class="info-value">${esc(data.ip)}</div></div>
+                ${hostRow}
                 <div class="info-row"><div class="info-label">当前出口</div><div class="info-value highlight">${esc(data.current_outlet)}</div></div>
                 <div class="info-row"><div class="info-label">剩余时间</div><div class="info-value">${esc(remaining)}</div></div>
                 ${groups}`;

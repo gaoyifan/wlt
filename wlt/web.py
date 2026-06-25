@@ -1,8 +1,10 @@
 import ipaddress
 import logging
 import os
-import socket
 
+import dns.exception
+import dns.resolver
+import dns.reversename
 from flask import Flask, jsonify, render_template, request
 
 from .config import load_config
@@ -13,9 +15,16 @@ logging.basicConfig(level=logging.INFO)
 CONFIG = load_config()
 nft = NftHandler(CONFIG.nftables)
 
-# Gunicorn can load this module as a config source via `-c python:wlt.web`.
+# --- gunicorn settings (loaded via `-c python:wlt.web`) ---
+# Real concurrency so one slow request can never wedge the whole server: with a
+# single default sync worker a blocking call (e.g. a reverse-DNS lookup for a
+# client whose PTR zone times out) stalls every other request, including ones
+# from other clients. gthread workers handle requests on a thread pool.
 _host = CONFIG.flask.host
 bind = f"[{_host}]:{CONFIG.flask.port}" if ":" in _host else f"{_host}:{CONFIG.flask.port}"
+workers = 2
+threads = 8
+worker_class = "gthread"
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates"))
 logger = app.logger
@@ -47,13 +56,28 @@ def _normalize_ip(raw: str) -> str:
     return str(addr)
 
 
-def get_client_info() -> tuple[str, str]:
-    ip = _normalize_ip(request.remote_addr or "127.0.0.1")
+def get_client_ip() -> str:
+    return _normalize_ip(request.remote_addr or "127.0.0.1")
+
+
+# Reverse-DNS (PTR) lookup with a hard 1s timeout. gthread concurrency means a
+# blocking lookup only ties up its own request thread, and the 1s cap keeps the
+# requesting client from waiting on a reverse zone that does not answer (musl's
+# libc resolver ignores resolv.conf timeouts, so we bound it here via dnspython).
+_PTR_TIMEOUT = 1.0
+_ptr_resolver = dns.resolver.Resolver()
+_ptr_resolver.timeout = _PTR_TIMEOUT
+_ptr_resolver.lifetime = _PTR_TIMEOUT
+
+
+def resolve_hostname(ip: str) -> str | None:
     try:
-        hostname = socket.gethostbyaddr(ip)[0]
-    except (socket.herror, OSError):
-        hostname = ip
-    return ip, hostname
+        answer = _ptr_resolver.resolve(
+            dns.reversename.from_address(ip), "PTR", lifetime=_PTR_TIMEOUT
+        )
+        return str(answer[0]).rstrip(".")
+    except (dns.exception.DNSException, ValueError):
+        return None
 
 
 def _family(ip: str) -> int:
@@ -64,7 +88,8 @@ def _family(ip: str) -> int:
 
 
 def _status_payload() -> dict:
-    ip, hostname = get_client_info()
+    ip = get_client_ip()
+    hostname = resolve_hostname(ip)
     family = _family(ip)
     map_name = CONFIG.map_for(family)
     if not map_name:
@@ -128,7 +153,7 @@ def _status_payload() -> dict:
 def index():
     portal = CONFIG.portal
     return render_template(
-        "spa.html.j2",
+        "index.html.j2",
         v4_host=portal.v4_host,
         v6_host=portal.v6_host,
     )
@@ -141,7 +166,7 @@ def api_status():
 
 @app.route("/api/open", methods=["POST"])
 def api_open():
-    ip, _ = get_client_info()
+    ip = get_client_ip()
     family = _family(ip)
     map_name = CONFIG.map_for(family)
     if not map_name:
@@ -176,7 +201,7 @@ def api_open():
 
 @app.route("/api/close", methods=["POST"])
 def api_close():
-    ip, _ = get_client_info()
+    ip = get_client_ip()
     family = _family(ip)
     map_name = CONFIG.map_for(family)
     if map_name and nft.delete_element(ip, map_name):
