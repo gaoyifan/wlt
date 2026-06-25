@@ -19,13 +19,25 @@ class FlaskConfig(BaseModel):
 class NftablesConfig(BaseModel):
     family: str = "inet"
     table: str = "wlt"
-    map: str = "src2mark"
+    map: str = "src2mark"          # IPv4 src -> mark map
+    map_v6: str | None = None      # IPv6 src -> mark map (enables v6 selection)
+
+
+class PortalConfig(BaseModel):
+    # Split-horizon hostnames used by the dual-stack composer page: each one
+    # must resolve to a single address family so the browser reveals (and the
+    # backend registers) the client's address for that family.
+    v4_host: str | None = None
+    v6_host: str | None = None
 
 
 class OutletGroup(BaseModel):
     title: str
     mask: int
     outlets: Dict[str, int]
+    # Parallel IPv6 outlet set. The same group title/mask serves both families;
+    # an IPv6 client is offered (and writes) outlets_v6, an IPv4 client outlets.
+    outlets_v6: Dict[str, int] = Field(default_factory=dict)
 
     @field_validator("outlets")
     @classmethod
@@ -34,12 +46,19 @@ class OutletGroup(BaseModel):
             raise ValueError("outlet_groups.outlets cannot be empty")
         return v
 
+    def outlets_for(self, family: int) -> Dict[str, int]:
+        return self.outlets_v6 if family == 6 else self.outlets
+
 
 class AppConfig(BaseModel):
     flask: FlaskConfig = Field(default_factory=FlaskConfig)
     nftables: NftablesConfig = Field(default_factory=NftablesConfig)
+    portal: PortalConfig = Field(default_factory=PortalConfig)
     outlet_groups: List[OutletGroup]
     time_limits: List[int]
+
+    def map_for(self, family: int) -> str | None:
+        return self.nftables.map_v6 if family == 6 else self.nftables.map
 
     @field_validator("outlet_groups")
     @classmethod

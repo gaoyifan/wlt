@@ -1,6 +1,7 @@
 """AsyncSSH TUI for network outlet selection."""
 
 import asyncio
+import ipaddress
 import logging
 import os
 import socket
@@ -9,6 +10,23 @@ import asyncssh
 
 from .config import load_config
 from .nft import NftHandler, get_duration_label, get_group_selection
+
+
+def _normalize_ip(raw: str) -> str:
+    try:
+        addr = ipaddress.ip_address(raw)
+    except ValueError:
+        return raw
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        return str(addr.ipv4_mapped)
+    return str(addr)
+
+
+def _family(ip: str) -> int:
+    try:
+        return ipaddress.ip_address(ip).version
+    except ValueError:
+        return 4
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -26,12 +44,14 @@ KEYS = "1234567890abcdefghijklmnopqrstuvwxyz"
 
 
 async def handle_client(process: asyncssh.SSHServerProcess):
-    ip = process.get_extra_info("peername")[0]
+    ip = _normalize_ip(process.get_extra_info("peername")[0])
+    family = _family(ip)
+    map_name = CONFIG.map_for(family)
     try:
         hostname = (await asyncio.to_thread(socket.gethostbyaddr, ip))[0]
     except (socket.herror, OSError):
         hostname = ip
-    log.info("Connected: %s (%s)", ip, hostname)
+    log.info("Connected: %s (%s) IPv%s", ip, hostname, family)
 
     def show(text):
         process.stdout.write(text.replace("\n", "\r\n"))
@@ -58,12 +78,21 @@ async def handle_client(process: asyncssh.SSHServerProcess):
 
     try:
         while True:
-            entry = await asyncio.to_thread(nft.get_entry, ip)
+            if not map_name:
+                show(
+                    f"\033[2J\033[H\n  {BOLD}网络通{RST}\n\n"
+                    f"  IP: {ip} ({hostname})\n\n"
+                    f"  {DIM}本协议族（IPv{family}）暂未启用出口选择{RST}\n\n"
+                    f"  按任意键退出 "
+                )
+                await key()
+                break
+            entry = await asyncio.to_thread(nft.get_entry, ip, map_name)
             if entry:
                 labels = [
                     s
                     for g in CONFIG.outlet_groups
-                    if (s := get_group_selection(entry.mark, g))
+                    if (s := get_group_selection(entry.mark, g.mask, g.outlets_for(family)))
                 ]
                 outlet = " + ".join(labels) if labels else hex(entry.mark)
                 expires = "永久" if entry.expires is None else f"{entry.expires}秒"
@@ -85,7 +114,7 @@ async def handle_client(process: asyncssh.SSHServerProcess):
             if not ch or ch in "qQ\x03":
                 break
             if ch == "2":
-                await asyncio.to_thread(nft.delete_element, ip)
+                await asyncio.to_thread(nft.delete_element, ip, map_name)
                 show(f"\n\n  {GREEN}网络已重置{RST}\n")
                 await asyncio.sleep(1)
                 continue
@@ -93,14 +122,15 @@ async def handle_client(process: asyncssh.SSHServerProcess):
                 continue
             show("\n\n")
 
+            groups = [g for g in CONFIG.outlet_groups if g.outlets_for(family)]
             selections = []
-            for group in CONFIG.outlet_groups:
-                names = list(group.outlets.keys())
+            for group in groups:
+                names = list(group.outlets_for(family).keys())
                 idx = await pick(group.title, names)
                 if idx is None:
                     break
                 selections.append((group, names[idx]))
-            if len(selections) != len(CONFIG.outlet_groups):
+            if len(selections) != len(groups):
                 continue
 
             idx = await pick(
@@ -113,11 +143,11 @@ async def handle_client(process: asyncssh.SSHServerProcess):
             mark_value = 0
             labels = []
             for group, name in selections:
-                mark_value |= group.outlets[name] & group.mask
+                mark_value |= group.outlets_for(family)[name] & group.mask
                 labels.append(name)
-            await asyncio.to_thread(nft.delete_element, ip)
+            await asyncio.to_thread(nft.delete_element, ip, map_name)
             ok = await asyncio.to_thread(
-                nft.add_element, ip, hex(mark_value), hours
+                nft.add_element, ip, hex(mark_value), hours, map_name
             )
             if ok:
                 show(

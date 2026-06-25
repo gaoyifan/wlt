@@ -8,8 +8,18 @@ debug = true
 [nftables]
 family = "inet"
 table = "wlt"
-map = "src2mark"
+map = "src2mark"        # IPv4 client src -> mark
+map_v6 = "src2mark6"    # IPv6 client src -> mark (omit to disable IPv6 selection)
 
+# Optional: split-horizon hostnames for the dual-stack single-page UI. Each must
+# resolve to a single address family so the browser reveals the client's address
+# for that family; the SPA fetches both /api/status concurrently.
+[portal]
+v4_host = "wlt-ipv4.example.net"
+v6_host = "wlt-ipv6.example.net"
+
+# Each group serves both families: IPv4 clients use `outlets`, IPv6 clients use
+# `outlets_v6` (omit outlets_v6 to keep a group IPv4-only).
 [[outlet_groups]]
 title = "选择出口"
 mask = 0xFF
@@ -19,10 +29,15 @@ mask = 0xFF
 "联通出口" = 0x3
 "教育网出口" = 0x4
 "CN2出口" = 0x5
+[outlet_groups.outlets_v6]
+"教育网出口" = 0x4
 
 [[outlet_groups]]
 title = "路由策略"
 mask = 0xF00
 [outlet_groups.outlets]
+"默认" = 0x0
+"覆盖CN路由" = 0x100
+[outlet_groups.outlets_v6]
 "默认" = 0x0
 "覆盖CN路由" = 0x100

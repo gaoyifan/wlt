@@ -60,12 +60,17 @@ class PersistTests(unittest.TestCase):
         content = render_snapshot(
             self.config,
             [
-                PersistedEntry(ip="192.0.2.3", mark=0x20),
-                PersistedEntry(
-                    ip="192.0.2.20",
-                    mark=0x1220,
-                    timeout=3600,
-                    expires=125,
+                (
+                    "src2mark",
+                    [
+                        PersistedEntry(ip="192.0.2.3", mark=0x20),
+                        PersistedEntry(
+                            ip="192.0.2.20",
+                            mark=0x1220,
+                            timeout=3600,
+                            expires=125,
+                        ),
+                    ],
                 ),
             ],
         )
@@ -79,6 +84,19 @@ class PersistTests(unittest.TestCase):
             "192.0.2.20 timeout 3600s expires 125s : 0x1220",
             content,
         )
+
+    def test_renders_v6_section_with_its_own_map_name(self):
+        config = NftablesConfig(map_v6="src2mark6")
+        content = render_snapshot(
+            config,
+            [
+                ("src2mark", [PersistedEntry(ip="192.0.2.3", mark=0x20)]),
+                ("src2mark6", [PersistedEntry(ip="2001:db8::3", mark=0x20)]),
+            ],
+        )
+        self.assertIn("add element inet wlt src2mark {", content)
+        self.assertIn("add element inet wlt src2mark6 {", content)
+        self.assertIn("2001:db8::3 : 0x20", content)
 
     def test_empty_snapshot_contains_only_comments(self):
         content = render_snapshot(self.config, [])

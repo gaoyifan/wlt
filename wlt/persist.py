@@ -57,7 +57,7 @@ def parse_map_entries(data: dict[str, Any]) -> list[PersistedEntry]:
         else:
             raw_ip = key
 
-        ip = str(ipaddress.IPv4Address(str(raw_ip)))
+        ip = str(ipaddress.ip_address(str(raw_ip)))
         mark = raw_mark if isinstance(raw_mark, int) else int(str(raw_mark), 0)
         if mark < 0 or mark > 0xFFFFFFFF:
             raise ValueError(f"Invalid mark for {ip}: {mark}")
@@ -71,7 +71,7 @@ def parse_map_entries(data: dict[str, Any]) -> list[PersistedEntry]:
             )
         )
 
-    return sorted(entries, key=lambda entry: ipaddress.IPv4Address(entry.ip))
+    return sorted(entries, key=lambda entry: ipaddress.ip_address(entry.ip))
 
 
 def _optional_seconds(value: Any) -> int | None:
@@ -81,29 +81,38 @@ def _optional_seconds(value: Any) -> int | None:
     return max(seconds, 1)
 
 
-def render_snapshot(config: NftablesConfig, entries: list[PersistedEntry]) -> str:
+def render_snapshot(
+    config: NftablesConfig, sections: list[tuple[str, list[PersistedEntry]]]
+) -> str:
     lines = [
         "# Managed by wlt-persist. Manual changes will be overwritten.",
         "# Timeout counters resume from the saved remaining time after reload.",
     ]
-    if not entries:
-        return "\n".join(lines) + "\n"
-
-    lines.append(f"add element {config.family} {config.table} {config.map} {{")
-    for index, entry in enumerate(entries):
-        options = []
-        if entry.timeout is not None:
-            options.append(f"timeout {entry.timeout}s")
-        if entry.expires is not None:
-            options.append(f"expires {entry.expires}s")
-        option_text = f" {' '.join(options)}" if options else ""
-        comma = "," if index < len(entries) - 1 else ""
-        lines.append(f"    {entry.ip}{option_text} : {hex(entry.mark)}{comma}")
-    lines.append("}")
+    for map_name, entries in sections:
+        if not entries:
+            continue
+        lines.append(f"add element {config.family} {config.table} {map_name} {{")
+        for index, entry in enumerate(entries):
+            options = []
+            if entry.timeout is not None:
+                options.append(f"timeout {entry.timeout}s")
+            if entry.expires is not None:
+                options.append(f"expires {entry.expires}s")
+            option_text = f" {' '.join(options)}" if options else ""
+            comma = "," if index < len(entries) - 1 else ""
+            lines.append(f"    {entry.ip}{option_text} : {hex(entry.mark)}{comma}")
+        lines.append("}")
     return "\n".join(lines) + "\n"
 
 
-def fetch_map(config: NftablesConfig) -> dict[str, Any]:
+def map_names(config: NftablesConfig) -> list[str]:
+    names = [config.map]
+    if config.map_v6 and config.map_v6 not in names:
+        names.append(config.map_v6)
+    return names
+
+
+def fetch_map(config: NftablesConfig, map_name: str) -> dict[str, Any]:
     result = subprocess.run(
         [
             "nft",
@@ -112,7 +121,7 @@ def fetch_map(config: NftablesConfig) -> dict[str, Any]:
             "map",
             config.family,
             config.table,
-            config.map,
+            map_name,
         ],
         capture_output=True,
         text=True,
@@ -150,11 +159,15 @@ def write_if_changed(path: Path, content: str) -> bool:
 
 
 def save_snapshot(config: NftablesConfig, path: Path = SNAPSHOT_PATH) -> bool:
-    data = fetch_map(config)
-    entries = parse_map_entries(data)
-    changed = write_if_changed(path, render_snapshot(config, entries))
+    sections: list[tuple[str, list[PersistedEntry]]] = []
+    total = 0
+    for map_name in map_names(config):
+        entries = parse_map_entries(fetch_map(config, map_name))
+        sections.append((map_name, entries))
+        total += len(entries)
+    changed = write_if_changed(path, render_snapshot(config, sections))
     if changed:
-        logger.info("Saved %d src2mark entries to %s", len(entries), path)
+        logger.info("Saved %d src2mark entries to %s", total, path)
     else:
         logger.debug("src2mark snapshot is unchanged")
     return changed

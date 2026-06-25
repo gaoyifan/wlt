@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>网络通</title>
+    <style>
+        :root {
+            --primary: #3157d5;
+            --primary-hover: #2748b8;
+            --primary-soft: #eef2ff;
+            --danger: #d94b68;
+            --danger-hover: #bd3d57;
+            --success: #16a085;
+            --text: #20263a;
+            --text-light: #737b91;
+            --bg: #f3f5f9;
+            --card-bg: #ffffff;
+            --border: #dde2ec;
+            --shadow: 0 12px 32px rgba(31, 42, 68, 0.08);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6; color: var(--text);
+            background: linear-gradient(180deg, #e9eeff 0, var(--bg) 260px);
+        }
+        header {
+            background: linear-gradient(135deg, #2948b8, #496de0);
+            color: #fff; padding: 22px 0; text-align: center;
+            box-shadow: 0 8px 24px rgba(49, 87, 213, 0.22);
+        }
+        header h1 { margin: 0; font-size: 1.7rem; letter-spacing: 0.08em; }
+        .container { max-width: 900px; margin: 0 auto; padding: 22px 16px 44px; }
+
+        .banner {
+            display: none; padding: 11px 14px; border-radius: 9px; margin-bottom: 16px;
+            font-weight: 500; border-left: 4px solid var(--success);
+            background: rgba(6, 214, 160, 0.10); color: #2b2d42;
+        }
+        .banner.show { display: block; }
+        .banner.error { border-left-color: var(--danger); background: rgba(217, 75, 104, 0.10); }
+
+        .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+        .card {
+            background: var(--card-bg); border: 1px solid rgba(221, 226, 236, 0.8);
+            border-radius: 14px; box-shadow: var(--shadow); padding: 20px;
+        }
+        .family-badge {
+            display: inline-block; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em;
+            color: var(--primary); background: var(--primary-soft); border-radius: 6px;
+            padding: 2px 10px; margin-bottom: 12px;
+        }
+        .info-row { display: flex; align-items: baseline; margin-bottom: 6px; font-size: 0.9rem; }
+        .info-label { font-weight: 600; width: 84px; color: var(--text-light); flex: 0 0 auto; }
+        .info-value { font-weight: 500; word-break: break-all; }
+        .info-value.highlight { color: var(--primary); }
+
+        .option-group { margin-top: 14px; }
+        .option-group h3 { font-size: 0.92rem; margin: 0 0 6px; color: var(--text); font-weight: 600; }
+        select {
+            width: 100%; padding: 11px 13px; font: inherit; font-size: 0.9rem; color: var(--text);
+            background: #fff; border: 1px solid var(--border); border-radius: 10px; cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='none' stroke='%233157d5' stroke-width='1.6' d='M2 4l4 4 4-4'/></svg>");
+            background-repeat: no-repeat; background-position: right 13px center;
+        }
+        select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.12); }
+        .unavailable { color: var(--text-light); padding: 10px 0; font-size: 0.9rem; }
+        .loading { color: var(--text-light); font-size: 0.9rem; padding: 8px 0; }
+
+        .timecard { margin-top: 18px; }
+        .timecard h3 { font-size: 0.95rem; margin: 0 0 10px; }
+        .time-options { display: flex; flex-wrap: wrap; gap: 8px; }
+        .time-item input { position: absolute; opacity: 0; pointer-events: none; }
+        .time-item label {
+            display: block; min-width: 74px; padding: 9px 14px; text-align: center; background: #fff;
+            border: 1px solid var(--border); border-radius: 9px; cursor: pointer; transition: all 0.15s;
+        }
+        .time-item input:checked + label {
+            background: var(--primary); color: #fff; border-color: var(--primary);
+            box-shadow: 0 4px 12px rgba(49, 87, 213, 0.2);
+        }
+        .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+        .btn {
+            font-weight: 600; text-align: center; border: 1px solid transparent; padding: 13px 20px;
+            font-size: 1.0rem; border-radius: 10px; cursor: pointer; width: 100%; transition: all 0.15s;
+        }
+        .btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+        .btn-primary { color: #fff; background: var(--primary); border-color: var(--primary); }
+        .btn-primary:hover:not([disabled]) { background: var(--primary-hover); }
+        .btn-danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+        .btn-danger:hover:not([disabled]) { background: var(--danger-hover); }
+        @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>网络通</h1>
+    </header>
+    <div class="container">
+        <div id="banner" class="banner"></div>
+        <div class="cols">
+            <div class="card" id="card-4"><span class="family-badge">IPv4</span>
+                <div class="body"><p class="loading">加载中…</p></div>
+            </div>
+            <div class="card" id="card-6"><span class="family-badge">IPv6</span>
+                <div class="body"><p class="loading">加载中…</p></div>
+            </div>
+        </div>
+
+        <div class="card timecard" id="timecard" style="display:none">
+            <h3>选择时限</h3>
+            <div class="time-options" id="time-options"></div>
+        </div>
+
+        <div class="actions">
+            <button type="button" id="open-all" class="btn btn-primary" disabled>开通网络</button>
+            <button type="button" id="close-all" class="btn btn-danger" disabled>重置网络</button>
+        </div>
+    </div>
+
+    <script>
+        const ENDPOINTS = { 4: "//{{ v4_host }}", 6: "//{{ v6_host }}" };
+        const state = { 4: null, 6: null };
+
+        const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+            ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+        function banner(msg, isError) {
+            const el = document.getElementById("banner");
+            el.textContent = msg;
+            el.className = "banner show" + (isError ? " error" : "");
+        }
+
+        function renderTimeLimits(limits) {
+            const wrap = document.getElementById("time-options");
+            if (wrap.childElementCount) return;
+            wrap.innerHTML = limits.map((t, i) => `
+                <div class="time-item">
+                    <input type="radio" name="hours" id="hours-${i}" value="${t.value}" ${i === 0 ? "checked" : ""}>
+                    <label for="hours-${i}">${esc(t.label)}</label>
+                </div>`).join("");
+            document.getElementById("timecard").style.display = "";
+        }
+
+        function renderCard(fam, data) {
+            const body = document.querySelector(`#card-${fam} .body`);
+            if (!data) {
+                body.innerHTML = `<p class="unavailable">无法连接 IPv${fam} 服务（本机可能不支持 IPv${fam}）。</p>`;
+                return;
+            }
+            if (!data.available) {
+                body.innerHTML = `
+                    <div class="info-row"><div class="info-label">IP 地址</div><div class="info-value">${esc(data.ip)}</div></div>
+                    <p class="unavailable">本协议族（IPv${fam}）暂未启用出口选择。</p>`;
+                return;
+            }
+            const remaining = data.expires == null ? "永久" : data.expires + "秒";
+            const groups = data.groups.map((g) => `
+                <div class="option-group">
+                    <h3>${esc(g.title)}</h3>
+                    <select data-field="${esc(g.field)}">
+                        ${g.options.map((o) => `<option value="${esc(o)}" ${o === g.selected ? "selected" : ""}>${esc(o)}</option>`).join("")}
+                    </select>
+                </div>`).join("");
+            body.innerHTML = `
+                <div class="info-row"><div class="info-label">IP 地址</div><div class="info-value">${esc(data.ip)}</div></div>
+                <div class="info-row"><div class="info-label">当前出口</div><div class="info-value highlight">${esc(data.current_outlet)}</div></div>
+                <div class="info-row"><div class="info-label">剩余时间</div><div class="info-value">${esc(remaining)}</div></div>
+                ${groups}`;
+        }
+
+        async function loadStatus(fam) {
+            try {
+                const res = await fetch(ENDPOINTS[fam] + "/api/status", { cache: "no-store" });
+                if (!res.ok) throw new Error("status " + res.status);
+                const data = await res.json();
+                state[fam] = data;
+                renderCard(fam, data);
+                if (data.available && data.time_limits) renderTimeLimits(data.time_limits);
+            } catch (e) {
+                state[fam] = null;
+                renderCard(fam, null);
+            }
+        }
+
+        function hours() {
+            const el = document.querySelector('input[name="hours"]:checked');
+            return el ? el.value : null;
+        }
+
+        function familyForm(fam) {
+            const data = state[fam];
+            if (!data || !data.available) return null;
+            const params = new URLSearchParams();
+            document.querySelectorAll(`#card-${fam} select[data-field]`).forEach((sel) => {
+                params.append(sel.dataset.field, sel.value);
+            });
+            params.append("hours", hours() || "");
+            return params;
+        }
+
+        async function act(path) {
+            const buttons = document.querySelectorAll(".btn");
+            buttons.forEach((b) => (b.disabled = true));
+            const msgs = [];
+            let anyError = false;
+            await Promise.all([4, 6].map(async (fam) => {
+                if (!state[fam] || !state[fam].available) return;
+                const body = path === "/api/open" ? familyForm(fam) : new URLSearchParams();
+                try {
+                    const res = await fetch(ENDPOINTS[fam] + path, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                        body,
+                    });
+                    const data = await res.json();
+                    msgs.push(data.message || (data.ok ? "成功" : "失败"));
+                    if (!data.ok) anyError = true;
+                } catch (e) {
+                    msgs.push(`IPv${fam} 请求失败`);
+                    anyError = true;
+                }
+            }));
+            banner(msgs.join("；") || "无可用协议族", anyError);
+            await Promise.all([loadStatus(4), loadStatus(6)]);
+            buttons.forEach((b) => (b.disabled = false));
+        }
+
+        document.getElementById("open-all").addEventListener("click", () => act("/api/open"));
+        document.getElementById("close-all").addEventListener("click", () => act("/api/close"));
+
+        Promise.all([loadStatus(4), loadStatus(6)]).then(() => {
+            const ok = state[4] || state[6];
+            document.getElementById("open-all").disabled = !ok;
+            document.getElementById("close-all").disabled = !ok;
+        });
+    </script>
+</body>
+
+</html>

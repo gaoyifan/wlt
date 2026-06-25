@@ -4,7 +4,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
-from .config import NftablesConfig, OutletGroup
+from .config import NftablesConfig
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +13,12 @@ def get_duration_label(hours: int) -> str:
     return "永久" if hours == 0 else f"{hours}小时"
 
 
-def get_group_selection(mark_value: int, group: OutletGroup) -> Optional[str]:
-    masked_value = mark_value & group.mask
-    for name, value in group.outlets.items():
-        if (value & group.mask) == masked_value:
+def get_group_selection(
+    mark_value: int, mask: int, outlets: dict[str, int]
+) -> Optional[str]:
+    masked_value = mark_value & mask
+    for name, value in outlets.items():
+        if (value & mask) == masked_value:
             return name
     return None
 
@@ -40,10 +42,13 @@ class NftHandler:
         res = self._run(["--json"] + args)
         return json.loads(res.stdout)
 
-    def get_entry(self, ip: str) -> Optional[NftEntry]:
+    def _map(self, map_name: Optional[str]) -> str:
+        return map_name or self.cfg.map
+
+    def get_entry(self, ip: str, map_name: Optional[str] = None) -> Optional[NftEntry]:
         try:
             data = self._json_cmd(
-                ["list", "map", self.cfg.family, self.cfg.table, self.cfg.map]
+                ["list", "map", self.cfg.family, self.cfg.table, self._map(map_name)]
             )
 
             # Navigate JSON structure: {"nftables": [..., {"map": {"elem": [...]}}]}
@@ -87,10 +92,10 @@ class NftHandler:
             logger.error("Failed to fetch nftables entry for %s: %s", ip, e)
         return None
 
-    def delete_element(self, ip: str) -> bool:
+    def delete_element(self, ip: str, map_name: Optional[str] = None) -> bool:
         try:
             # Check if element exists first
-            entry = self.get_entry(ip)
+            entry = self.get_entry(ip, map_name)
             if entry is None:
                 # Element doesn't exist, return success directly
                 return True
@@ -102,7 +107,7 @@ class NftHandler:
                     "element",
                     self.cfg.family,
                     self.cfg.table,
-                    self.cfg.map,
+                    self._map(map_name),
                     "{",
                     ip,
                     "}",
@@ -118,7 +123,9 @@ class NftHandler:
             logger.error("Error deleting rule for %s: %s", ip, e)
             return False
 
-    def add_element(self, ip: str, mark: str, hours: Optional[int]) -> bool:
+    def add_element(
+        self, ip: str, mark: str, hours: Optional[int], map_name: Optional[str] = None
+    ) -> bool:
         try:
             # Construct element string
             if hours:
@@ -132,7 +139,7 @@ class NftHandler:
                     "element",
                     self.cfg.family,
                     self.cfg.table,
-                    self.cfg.map,
+                    self._map(map_name),
                     "{",
                 ]
                 + elem_spec
