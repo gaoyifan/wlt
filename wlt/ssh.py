@@ -125,7 +125,7 @@ async def handle_client(process: asyncssh.SSHServerProcess):
             groups = [g for g in CONFIG.outlet_groups if g.outlets_for(family)]
             selections = []
             for group in groups:
-                names = list(group.outlets_for(family).keys())
+                names = list(group.display_outlets_for(family).keys())
                 idx = await pick(group.title, names)
                 if idx is None:
                     break

@@ -20,6 +20,11 @@ v6_host = "wlt-ipv6.example.net"
 
 # Each group serves both families: IPv4 clients use `outlets`, IPv6 clients use
 # `outlets_v6` (omit outlets_v6 to keep a group IPv4-only).
+#
+# Set `cn_last = true` on a group to push CN-country outlets (names starting with
+# "CN ") to the bottom of the displayed list. This only reorders the UI/TUI; mark
+# values and lookups are unaffected. Handy for an overseas group that also lists
+# the domestic exits for completeness.
 [[outlet_groups]]
 title = "选择出口"
 mask = 0xFF

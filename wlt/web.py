@@ -122,12 +122,13 @@ def _status_payload() -> dict:
         )
         if selection:
             current_labels.append(selection)
+        display_outlets = group.display_outlets_for(family)
         groups.append(
             {
                 "title": group.title,
                 "field": f"group_{idx}",
-                "options": list(outlets.keys()),
-                "selected": selection or next(iter(outlets.keys())),
+                "options": list(display_outlets.keys()),
+                "selected": selection or next(iter(display_outlets.keys())),
             }
         )
 

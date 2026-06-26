@@ -38,6 +38,11 @@ class OutletGroup(BaseModel):
     # Parallel IPv6 outlet set. The same group title/mask serves both families;
     # an IPv6 client is offered (and writes) outlets_v6, an IPv4 client outlets.
     outlets_v6: Dict[str, int] = Field(default_factory=dict)
+    # When set, outlets whose name marks a CN-country exit (name starts with
+    # "CN ", e.g. "CN 合肥 | 中国电信") are moved to the end of the displayed list,
+    # keeping their relative order. Used by the "海外出口" group so domestic exits
+    # rank below the overseas ones. Only affects display order, not mark lookup.
+    cn_last: bool = False
 
     @field_validator("outlets")
     @classmethod
@@ -48,6 +53,16 @@ class OutletGroup(BaseModel):
 
     def outlets_for(self, family: int) -> Dict[str, int]:
         return self.outlets_v6 if family == 6 else self.outlets
+
+    def display_outlets_for(self, family: int) -> Dict[str, int]:
+        outlets = self.outlets_for(family)
+        if not self.cn_last:
+            return outlets
+        cn = {k: v for k, v in outlets.items() if k.startswith("CN ")}
+        if not cn:
+            return outlets
+        non_cn = {k: v for k, v in outlets.items() if not k.startswith("CN ")}
+        return {**non_cn, **cn}
 
 
 class AppConfig(BaseModel):

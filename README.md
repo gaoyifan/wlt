@@ -145,6 +145,7 @@ include "/etc/nftables/wlt_src2mark.conf"
 | `nftables.table` | `wlt` | Nftables 表名 |
 | `nftables.map` | `src2mark` | 存储 IP 映射关系的 Map 名 |
 | `outlet_groups` | **(必填)** | 出口组列表，包含 `title`、`mask` 和 `outlets` |
+| `outlet_groups[].cn_last` | `false` | 为 `true` 时把名称以 `CN ` 开头的出口排到该组列表末尾（仅影响展示顺序，不改变 mark） |
 | `time_limits` | **(必填)** | 可选时长列表（小时），`0` 表示永久 |
 
 ### 3. 启动服务

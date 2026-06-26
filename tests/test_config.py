@@ -106,6 +106,60 @@ class ConfigMergeTests(unittest.TestCase):
 
             self.assertEqual(config.flask.port, 80)
 
+    def test_cn_last_moves_cn_outlets_to_the_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "config.toml"
+            self.write(
+                main,
+                """
+                time_limits = [1]
+
+                [[outlet_groups]]
+                title = "海外出口"
+                mask = 0xFF
+                cn_last = true
+                [outlet_groups.outlets]
+                "默认" = 0x0
+                "CN 合肥 | 中国电信" = 0x12
+                "JP 东京 | Cloudflare WARP" = 0x66
+                "CN 杭州 | 阿里云" = 0x40
+                "US 圣何塞 | Cloudflare WARP" = 0x67
+                """,
+            )
+
+            config = load_config(str(main))
+            group = config.outlet_groups[0]
+
+            self.assertEqual(
+                list(group.display_outlets_for(4).keys()),
+                [
+                    "默认",
+                    "JP 东京 | Cloudflare WARP",
+                    "US 圣何塞 | Cloudflare WARP",
+                    "CN 合肥 | 中国电信",
+                    "CN 杭州 | 阿里云",
+                ],
+            )
+            # Underlying outlets and mark lookups are untouched.
+            self.assertEqual(group.outlets["CN 合肥 | 中国电信"], 0x12)
+            self.assertEqual(
+                list(group.outlets.keys())[1], "CN 合肥 | 中国电信"
+            )
+
+    def test_cn_last_defaults_off_and_preserves_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "config.toml"
+            self.write(main, BASE_CONFIG)
+
+            config = load_config(str(main))
+            overseas = config.outlet_groups[1]
+
+            self.assertFalse(overseas.cn_last)
+            self.assertEqual(
+                list(overseas.display_outlets_for(4).keys()),
+                list(overseas.outlets.keys()),
+            )
+
     def test_reports_the_invalid_fragment_filename(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
