@@ -103,19 +103,30 @@ mask = 0xF00
 [[outlet_groups]]
 title = "国内出口"
 [outlet_groups.outlets]
-"测试出口1" = 0xff00
+"测试出口1" = 0xfd00
 "测试出口2" = 0xfe00
 
 [[outlet_groups]]
 title = "海外出口"
 [outlet_groups.outlets]
-"测试出口1" = 0xff
+"测试出口1" = 0xfd
 "测试出口2" = 0xfe
 ```
 
 `outlet_groups` 按 `title` 合并，组内的 `outlets` 按出口名称合并；同名值由
 文件名排序靠后的配置覆盖。其他字典递归合并，普通列表（如
 `time_limits`）整体覆盖。非 `*.toml` 文件和子目录会被忽略。
+
+#### 禁用 IPv6 转发
+
+如果 IPv6 出口配置中保留 `0xff00` 和 `0xff` 作为“禁用 IPv6”，宿主机需要把最终 `fwmark 0xff` 指向一张拒绝路由表。例如在 IPv6 策略路由脚本中加入：
+
+```iproute2
+rule add pref 10 lookup 5255 fwmark 0xff/0xff
+route replace unreachable default table 5255
+```
+
+当前 nftables 的 IPv6 打标逻辑会对国内目的地址使用 mark 高字节（`>> 8`），对海外目的地址使用 mark 低字节（`& 0xff`）。因此用户可以只禁用国内 IPv6、只禁用海外 IPv6，或两个分组都选择“禁用 IPv6”。
 
 #### 持久化出口设置
 
@@ -143,7 +154,8 @@ include "/etc/nftables/wlt_src2mark.conf"
 | `flask.debug` | `true` | 是否开启 Flask 调试模式 |
 | `nftables.family` | `inet` | Nftables 协议族 (inet/ip/ip6) |
 | `nftables.table` | `wlt` | Nftables 表名 |
-| `nftables.map` | `src2mark` | 存储 IP 映射关系的 Map 名 |
+| `nftables.map` | `src2mark` | 存储 IPv4 映射关系的 Map 名 |
+| `nftables.map_v6` | `None` | 存储 IPv6 映射关系的 Map 名；配置后可选择 IPv6 出口或“禁用 IPv6” |
 | `outlet_groups` | **(必填)** | 出口组列表，包含 `title`、`mask` 和 `outlets` |
 | `outlet_groups[].cn_last` | `false` | 为 `true` 时把名称以 `CN ` 开头的出口排到该组列表末尾（仅影响展示顺序，不改变 mark） |
 | `time_limits` | **(必填)** | 可选时长列表（小时），`0` 表示永久 |
