@@ -6,8 +6,11 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY templates ./templates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
+# Cache mounts are keyed per platform: multi-arch builds run in parallel and
+# would otherwise race on the shared cargo registry/target directories.
+ARG TARGETPLATFORM
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
+    --mount=type=cache,target=/app/target,id=cargo-target-${TARGETPLATFORM} \
     cargo build --release --locked && cp target/release/wlt /usr/local/bin/wlt
 
 FROM alpine:3
