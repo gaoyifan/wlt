@@ -1,16 +1,23 @@
-FROM ghcr.io/astral-sh/uv:python3.12-alpine
+FROM rust:1-alpine AS build
+
+RUN apk add --no-cache musl-dev
 
 WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY templates ./templates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked && cp target/release/wlt /usr/local/bin/wlt
+
+FROM alpine:3
 
 RUN apk add --no-cache nftables
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+COPY --from=build /usr/local/bin/wlt /usr/local/bin/wlt
 
-COPY wlt/ ./wlt/
-COPY templates/ ./templates/
-RUN uv sync --frozen --no-dev
+WORKDIR /app
 
-EXPOSE 80 2222
+EXPOSE 80 443 2222
 
-CMD ["uv", "run", "gunicorn", "-c", "python:wlt.web", "wlt.web:app"]
+CMD ["wlt"]

@@ -1,13 +1,8 @@
-# python generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# venv
-.venv
+# rust
+/target
 
 # config
 config.toml
+
+# ssh host key (local runs)
+ssh_host_key

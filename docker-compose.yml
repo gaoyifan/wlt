@@ -5,62 +5,11 @@ services:
     image: ghcr.io/gaoyifan/wlt:latest
     container_name: wlt
     volumes:
-      - ./config.toml:/app/config.toml
-      - ./config.d:/app/config.d:ro
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-    restart: unless-stopped
-  wlt-ssh:
-    image: ghcr.io/gaoyifan/wlt:latest
-    container_name: wlt-ssh
-    profiles:
-      - ssh
-    volumes:
-      - ./config.toml:/app/config.toml
-      - ./config.d:/app/config.d:ro
-      - wlt-ssh-data:/data
-    environment:
-      SSH_HOST_KEY: /data/ssh_host_key
-    command: ["uv", "run", "wlt-ssh"]
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-    restart: unless-stopped
-  wlt-https:
-    image: ghcr.io/gaoyifan/wlt:latest
-    container_name: wlt-https
-    profiles:
-      - tls
-    volumes:
-      - ./config.toml:/app/config.toml
-      - ./config.d:/app/config.d:ro
-      - /etc/ssl/private/yfgao:/etc/ssl/private/yfgao:ro
-    command:
-      - uv
-      - run
-      - gunicorn
-      - -c
-      - python:wlt.web
-      - -b
-      - "[::]:443"
-      - --certfile
-      - /etc/ssl/private/yfgao/fullchain.pem
-      - --keyfile
-      - /etc/ssl/private/yfgao/privkey.pem
-      - wlt.web:app
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-    restart: unless-stopped
-  wlt-persist:
-    image: ghcr.io/gaoyifan/wlt:latest
-    container_name: wlt-persist
-    volumes:
       - ./config.toml:/app/config.toml:ro
       - ./config.d:/app/config.d:ro
+      - /etc/ssl/private/yfgao:/etc/ssl/private/yfgao:ro
       - /etc/nftables:/etc/nftables
-    command: ["uv", "run", "wlt-persist"]
+      - wlt-ssh-data:/data
     network_mode: host
     cap_add:
       - NET_ADMIN

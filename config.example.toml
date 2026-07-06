@@ -1,9 +1,26 @@
 time_limits = [1, 4, 8, 24, 0] # 1小时, 4小时, 8小时, 24小时, 永久
 
-[flask]
-host = "0.0.0.0"
-port = 80
-debug = true
+# Services are enabled by the presence of their section: [web], [ssh], [persist].
+
+[web]
+# One listener is bound per address; "[::]:80" is dual-stack (accepts IPv4 too).
+listen = ["[::]:80"]
+# Optional TLS listeners (serve the same routes):
+# [web.https]
+# listen = ["[::]:443"]
+# cert = "/etc/ssl/private/example/fullchain.pem"
+# key = "/etc/ssl/private/example/privkey.pem"
+
+# No-auth SSH TUI. The host key is generated on first start if missing.
+[ssh]
+listen = ["[::]:2222"]
+host_key = "/data/ssh_host_key"
+
+# Periodically snapshot the src2mark maps to a reloadable nftables include
+# file (only written when the content changes; atomic replace + fsync).
+[persist]
+path = "/etc/nftables/wlt_src2mark.conf"
+interval = 300          # seconds
 
 [nftables]
 family = "inet"
@@ -17,6 +34,9 @@ map_v6 = "src2mark6"    # IPv6 client src -> mark (omit to disable IPv6 selectio
 [portal]
 v4_host = "wlt-ipv4.example.net"
 v6_host = "wlt-ipv6.example.net"
+# Allow cross-origin API calls from this domain and its subdomains (needed by
+# the split-horizon SPA; omit to disable CORS entirely).
+cors_domain = "example.net"
 
 # Each group serves both families: IPv4 clients use `outlets`, IPv6 clients use
 # `outlets_v6` (omit outlets_v6 to keep a group IPv4-only).
