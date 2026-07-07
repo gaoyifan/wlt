@@ -123,7 +123,11 @@
     </div>
 
     <script>
-        const ENDPOINTS = { 4: "//{{ v4_host }}", 6: "//{{ v6_host }}" };
+        const DEFAULT_API_HOSTS = { 4: "{{ v4_host }}", 6: "{{ v6_host }}" };
+        const API_HOSTS_BY_PAGE = {{ api_hosts_json|safe }};
+        const endpoint = (host) => host ? "//" + host : "";
+        const apiHosts = API_HOSTS_BY_PAGE[window.location.hostname] || DEFAULT_API_HOSTS;
+        const ENDPOINTS = { 4: endpoint(apiHosts[4]), 6: endpoint(apiHosts[6]) };
         const state = { 4: null, 6: null };
 
         const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>

@@ -64,15 +64,46 @@ impl Default for NftablesConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct PortalHosts {
+    pub v4_host: Option<String>,
+    pub v6_host: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct PortalConfig {
     /// Split-horizon hostnames used by the dual-stack single-page UI: each one
     /// must resolve to a single address family so the browser reveals (and the
     /// backend registers) the client's address for that family.
     pub v4_host: Option<String>,
     pub v6_host: Option<String>,
+    /// Per-page-host split-horizon API hosts. This lets the same WLT service be
+    /// reachable through multiple vanity domains while keeping family-specific
+    /// API requests on matching hostnames.
+    #[serde(default)]
+    pub hosts: IndexMap<String, PortalHosts>,
     /// Allow cross-origin API calls from this domain and its subdomains
     /// (the SPA on one split-horizon host fetches the sibling family's API).
     pub cors_domain: Option<String>,
+    /// Additional CORS domains. Exact host matches and subdomains are allowed.
+    #[serde(default)]
+    pub cors_domains: Vec<String>,
+}
+
+impl PortalConfig {
+    pub fn cors_domains(&self) -> Vec<String> {
+        let mut domains = Vec::new();
+        if let Some(domain) = self.cors_domain.as_deref() {
+            if !domain.is_empty() {
+                domains.push(domain.to_owned());
+            }
+        }
+        for domain in &self.cors_domains {
+            if !domain.is_empty() && !domains.contains(domain) {
+                domains.push(domain.clone());
+            }
+        }
+        domains
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -462,6 +493,41 @@ cn_last = true
             .collect();
         let raw: Vec<&str> = overseas.outlets.keys().map(String::as_str).collect();
         assert_eq!(display, raw);
+    }
+
+    #[test]
+    fn loads_portal_host_overrides_and_cors_domains() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("config.toml");
+        write(
+            &main,
+            &format!(
+                r#"{BASE_CONFIG}
+
+[portal]
+v4_host = "wlt-ipv4.example.net"
+v6_host = "wlt-ipv6.example.net"
+cors_domain = "example.net"
+cors_domains = ["example.org", "example.net"]
+
+[portal.hosts."wlt.example.org"]
+v4_host = "wlt-ipv4.example.org"
+v6_host = "wlt-ipv6.example.org"
+"#
+            ),
+        );
+
+        let config = load_config(&main).unwrap();
+
+        assert_eq!(
+            config.portal.hosts["wlt.example.org"].v4_host.as_deref(),
+            Some("wlt-ipv4.example.org")
+        );
+        assert_eq!(
+            config.portal.hosts["wlt.example.org"].v6_host.as_deref(),
+            Some("wlt-ipv6.example.org")
+        );
+        assert_eq!(config.portal.cors_domains(), ["example.net", "example.org"]);
     }
 
     #[test]

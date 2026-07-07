@@ -179,7 +179,8 @@ include "/etc/nftables/wlt_src2mark.conf"
 | `nftables.map` | `src2mark` | 存储 IPv4 映射关系的 Map 名 |
 | `nftables.map_v6` | `None` | 存储 IPv6 映射关系的 Map 名；配置后可选择 IPv6 出口或“禁用 IPv6” |
 | `portal.v4_host` / `portal.v6_host` | `None` | 双栈 SPA 的分横线（split-horizon）主机名 |
-| `portal.cors_domain` | `None` | 允许跨域访问 API 的域名（含子域名）；缺省关闭 CORS |
+| `portal.hosts."<host>".v4_host` / `v6_host` | `None` | 按访问 SPA 的主机名覆盖 split-horizon API 主机；未匹配时回退到 `portal.v4_host` / `portal.v6_host` |
+| `portal.cors_domain` / `portal.cors_domains` | `None` / `[]` | 允许跨域访问 API 的域名（含子域名）；缺省关闭 CORS |
 | `outlet_groups` | **(必填)** | 出口组列表，包含 `title`、`mask` 和 `outlets` |
 | `outlet_groups[].cn_last` | `false` | 为 `true` 时把名称以 `CN ` 开头的出口排到该组列表末尾（仅影响展示顺序，不改变 mark） |
 | `time_limits` | **(必填)** | 可选时长列表（小时），`0` 表示永久 |

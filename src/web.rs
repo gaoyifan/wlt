@@ -16,13 +16,14 @@ use tokio::task::JoinSet;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::app::{AppState, ip_family, normalize_ip};
-use crate::config::{WebConfig, duration_label};
+use crate::config::{PortalConfig, WebConfig, duration_label};
 
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexTemplate {
     v4_host: String,
     v6_host: String,
+    api_hosts_json: String,
 }
 
 #[derive(Serialize)]
@@ -79,6 +80,7 @@ async fn index(State(state): State<AppState>) -> impl IntoResponse {
     let template = IndexTemplate {
         v4_host: portal.v4_host.clone().unwrap_or_default(),
         v6_host: portal.v6_host.clone().unwrap_or_default(),
+        api_hosts_json: api_hosts_json(portal),
     };
     match template.render() {
         Ok(html) => Html(html).into_response(),
@@ -87,6 +89,30 @@ async fn index(State(state): State<AppState>) -> impl IntoResponse {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+fn api_hosts_json(portal: &PortalConfig) -> String {
+    let mut hosts = serde_json::Map::new();
+    for (page_host, api_hosts) in &portal.hosts {
+        let v4_host = api_hosts
+            .v4_host
+            .as_deref()
+            .or(portal.v4_host.as_deref())
+            .unwrap_or("");
+        let v6_host = api_hosts
+            .v6_host
+            .as_deref()
+            .or(portal.v6_host.as_deref())
+            .unwrap_or("");
+        hosts.insert(
+            page_host.clone(),
+            serde_json::json!({
+                "4": v4_host,
+                "6": v6_host,
+            }),
+        );
+    }
+    serde_json::Value::Object(hosts).to_string()
 }
 
 fn time_limits(state: &AppState) -> Vec<TimeLimitPayload> {
@@ -255,9 +281,16 @@ async fn api_close(
     )
 }
 
-/// Allow cross-origin requests from `domain` and its subdomains (the SPA on
-/// one split-horizon host fetches the sibling family's API; no credentials).
-fn cors_layer(domain: String) -> CorsLayer {
+/// Allow cross-origin requests from configured domains and their subdomains
+/// (the SPA on one split-horizon host fetches the sibling family's API; no
+/// credentials).
+fn origin_host_allowed(host: &str, domains: &[String]) -> bool {
+    domains
+        .iter()
+        .any(|domain| host == domain || host.ends_with(&format!(".{domain}")))
+}
+
+fn cors_layer(domains: Vec<String>) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _| {
             let Ok(origin) = origin.to_str() else {
@@ -269,22 +302,22 @@ fn cors_layer(domain: String) -> CorsLayer {
                 .split(['/', ':'])
                 .next()
                 .unwrap_or("");
-            host == domain || host.ends_with(&format!(".{domain}"))
+            origin_host_allowed(host, &domains)
         }))
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
         .allow_headers([header::CONTENT_TYPE])
 }
 
 fn router(state: AppState) -> Router {
-    let cors_domain = state.cfg.portal.cors_domain.clone();
+    let cors_domains = state.cfg.portal.cors_domains();
     let mut router = Router::new()
         .route("/", get(index))
         .route("/api/status", get(api_status))
         .route("/api/open", post(api_open))
         .route("/api/close", post(api_close))
         .with_state(state);
-    if let Some(domain) = cors_domain {
-        router = router.layer(cors_layer(domain));
+    if !cors_domains.is_empty() {
+        router = router.layer(cors_layer(cors_domains));
     }
     router
 }
@@ -331,5 +364,56 @@ pub async fn serve(state: AppState, cfg: WebConfig) -> Result<()> {
     match listeners.join_next().await {
         Some(result) => result.context("web listener panicked")?,
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{PortalConfig, PortalHosts};
+    use indexmap::IndexMap;
+
+    #[test]
+    fn renders_per_page_api_hosts_as_json() {
+        let mut hosts = IndexMap::new();
+        hosts.insert(
+            "wlt.example.org".to_owned(),
+            PortalHosts {
+                v4_host: Some("wlt-ipv4.example.org".to_owned()),
+                v6_host: Some("wlt-ipv6.example.org".to_owned()),
+            },
+        );
+        hosts.insert(
+            "wlt.example.net".to_owned(),
+            PortalHosts {
+                v4_host: None,
+                v6_host: Some("wlt-ipv6.example.net".to_owned()),
+            },
+        );
+        let portal = PortalConfig {
+            v4_host: Some("wlt-ipv4.default.example".to_owned()),
+            v6_host: Some("wlt-ipv6.default.example".to_owned()),
+            hosts,
+            cors_domain: None,
+            cors_domains: vec![],
+        };
+
+        let data: serde_json::Value = serde_json::from_str(&api_hosts_json(&portal)).unwrap();
+
+        assert_eq!(data["wlt.example.org"]["4"], "wlt-ipv4.example.org");
+        assert_eq!(data["wlt.example.org"]["6"], "wlt-ipv6.example.org");
+        assert_eq!(data["wlt.example.net"]["4"], "wlt-ipv4.default.example");
+        assert_eq!(data["wlt.example.net"]["6"], "wlt-ipv6.example.net");
+    }
+
+    #[test]
+    fn matches_exact_cors_domains_and_subdomains() {
+        let domains = vec!["example.net".to_owned(), "example.org".to_owned()];
+
+        assert!(origin_host_allowed("example.net", &domains));
+        assert!(origin_host_allowed("wlt.example.net", &domains));
+        assert!(origin_host_allowed("wlt.example.org", &domains));
+        assert!(!origin_host_allowed("badexample.net", &domains));
+        assert!(!origin_host_allowed("example.com", &domains));
     }
 }

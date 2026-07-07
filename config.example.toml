@@ -34,9 +34,16 @@ map_v6 = "src2mark6"    # IPv6 client src -> mark (omit to disable IPv6 selectio
 [portal]
 v4_host = "wlt-ipv4.example.net"
 v6_host = "wlt-ipv6.example.net"
+# Optional: choose family-specific API hosts by the domain used to open the SPA.
+# If the current page host is not listed here, v4_host/v6_host above are used.
+[portal.hosts."wlt.example.org"]
+v4_host = "wlt-ipv4.example.org"
+v6_host = "wlt-ipv6.example.org"
+
 # Allow cross-origin API calls from this domain and its subdomains (needed by
 # the split-horizon SPA; omit to disable CORS entirely).
 cors_domain = "example.net"
+cors_domains = ["example.org"]
 
 # Each group serves both families: IPv4 clients use `outlets`, IPv6 clients use
 # `outlets_v6` (omit outlets_v6 to keep a group IPv4-only).
