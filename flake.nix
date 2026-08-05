@@ -57,5 +57,7 @@
     });
 
     formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
+
+    nixosModules.default = import ./nixos-module.nix {inherit self;};
   };
 }
