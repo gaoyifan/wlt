@@ -32,8 +32,6 @@ in {
         "nftables.service"
       ];
       serviceConfig = {
-        RuntimeDirectory = "wlt";
-        RuntimeDirectoryMode = "0700";
         ExecStart = "${lib.getExe cfg.package} --config ${cfg.configFile}";
         Restart = "always";
       };
