@@ -24,10 +24,14 @@ use crate::app::AppState;
 #[derive(Parser)]
 #[command(version)]
 struct Args {
-    /// Path to the main config file; fragments are read from the sibling
-    /// config.d/ directory.
+    /// Path to the main config file.
     #[arg(long, default_value = "config.toml")]
     config: PathBuf,
+
+    /// Path to the config fragment directory; defaults to config.d next to
+    /// the main config file.
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -43,7 +47,10 @@ async fn main() -> Result<()> {
         .expect("failed to install rustls crypto provider");
 
     let args = Args::parse();
-    let cfg = Arc::new(config::load_config(&args.config)?);
+    let cfg = Arc::new(config::load_config(
+        &args.config,
+        args.config_dir.as_deref(),
+    )?);
     let nft = nft::Nft::new(&cfg.nftables);
     let state = AppState::new(cfg.clone(), nft.clone());
 

@@ -288,13 +288,14 @@ fn deep_merge(base: Value, other: Value, key: Option<&str>) -> Value {
     }
 }
 
-pub fn load_config(path: &Path) -> Result<AppConfig> {
+pub fn load_config(path: &Path, config_dir: Option<&Path>) -> Result<AppConfig> {
     if !path.is_file() {
         bail!("Failed to load config: {} not found", path.display());
     }
     let mut data = load_toml(path)?;
 
-    let config_dir = path.parent().unwrap_or(Path::new(".")).join("config.d");
+    let default_config_dir = path.parent().unwrap_or(Path::new(".")).join("config.d");
+    let config_dir = config_dir.unwrap_or(&default_config_dir);
     if config_dir.exists() && !config_dir.is_dir() {
         bail!(
             "Failed to load config: {} is not a directory",
@@ -353,10 +354,29 @@ mask = 0xFF
         let main = tmp.path().join("config.toml");
         write(&main, BASE_CONFIG);
 
-        let config = load_config(&main).unwrap();
+        let config = load_config(&main, None).unwrap();
 
         assert_eq!(config.web.as_ref().unwrap().listen, ["0.0.0.0:80"]);
         assert_eq!(config.outlet_groups[0].outlets["中国电信"], 0x1200);
+    }
+
+    #[test]
+    fn loads_fragments_from_explicit_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("config.toml");
+        let fragments = tmp.path().join("fragments");
+        write(&main, BASE_CONFIG);
+        write(
+            &fragments.join("10-web.toml"),
+            r#"
+[web]
+listen = ["127.0.0.1:8080"]
+"#,
+        );
+
+        let config = load_config(&main, Some(&fragments)).unwrap();
+
+        assert_eq!(config.web.as_ref().unwrap().listen, ["127.0.0.1:8080"]);
     }
 
     #[test]
@@ -395,7 +415,7 @@ title = "国内出口"
 "#,
         );
 
-        let config = load_config(&main).unwrap();
+        let config = load_config(&main, None).unwrap();
 
         assert_eq!(
             config.web.as_ref().unwrap().listen,
@@ -426,7 +446,7 @@ title = "国内出口"
             "this is not valid toml",
         );
 
-        let config = load_config(&main).unwrap();
+        let config = load_config(&main, None).unwrap();
 
         assert_eq!(config.web.as_ref().unwrap().listen, ["0.0.0.0:80"]);
     }
@@ -453,7 +473,7 @@ cn_last = true
 "#,
         );
 
-        let config = load_config(&main).unwrap();
+        let config = load_config(&main, None).unwrap();
         let group = &config.outlet_groups[0];
 
         let display: Vec<&str> = group
@@ -482,7 +502,7 @@ cn_last = true
         let main = tmp.path().join("config.toml");
         write(&main, BASE_CONFIG);
 
-        let config = load_config(&main).unwrap();
+        let config = load_config(&main, None).unwrap();
         let overseas = &config.outlet_groups[1];
 
         assert!(!overseas.cn_last);
@@ -517,7 +537,7 @@ v6_host = "wlt-ipv6.example.org"
             ),
         );
 
-        let config = load_config(&main).unwrap();
+        let config = load_config(&main, None).unwrap();
 
         assert_eq!(
             config.portal.hosts["wlt.example.org"].v4_host.as_deref(),
@@ -537,7 +557,7 @@ v6_host = "wlt-ipv6.example.org"
         write(&main, BASE_CONFIG);
         write(&tmp.path().join("config.d/10-invalid.toml"), "invalid = [");
 
-        let err = format!("{:#}", load_config(&main).unwrap_err());
+        let err = format!("{:#}", load_config(&main, None).unwrap_err());
         assert!(
             err.contains("10-invalid.toml"),
             "error should name the fragment: {err}"
