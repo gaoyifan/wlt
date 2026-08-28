@@ -34,7 +34,11 @@ fn sort_entries(mut entries: Vec<NftEntry>) -> Vec<NftEntry> {
     entries
 }
 
-pub fn render_snapshot(family: &str, table: &str, sections: &[(&str, Vec<NftEntry>)]) -> String {
+pub(crate) fn render_snapshot(
+    family: &str,
+    table: &str,
+    sections: &[(&str, Vec<NftEntry>)],
+) -> String {
     let mut lines = vec![
         "# Managed by wlt-persist. Manual changes will be overwritten.".to_owned(),
         "# Timeout counters resume from the saved remaining time after reload.".to_owned(),
@@ -65,7 +69,7 @@ pub fn render_snapshot(family: &str, table: &str, sections: &[(&str, Vec<NftEntr
 
 /// Atomically replace `path` with `content` if it differs; fsyncs both the
 /// file and its directory. Returns whether a write happened.
-pub fn write_if_changed(path: &Path, content: &str) -> Result<bool> {
+pub(crate) fn write_if_changed(path: &Path, content: &str) -> Result<bool> {
     if std::fs::read(path).is_ok_and(|existing| existing == content.as_bytes()) {
         return Ok(false);
     }
@@ -118,7 +122,7 @@ async fn save_safely(cfg: &AppConfig, nft: &Nft, path: &Path) {
     }
 }
 
-pub async fn run(
+pub(crate) async fn run(
     cfg: std::sync::Arc<AppConfig>,
     nft: Nft,
     persist: PersistConfig,

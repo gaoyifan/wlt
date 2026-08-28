@@ -3,14 +3,15 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use indexmap::IndexMap;
 use nftables::types::NfFamily;
 use serde::Deserialize;
-use toml::Value;
+
+use crate::config_file::load_merged_toml;
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct WebConfig {
+pub(crate) struct WebConfig {
     /// Listen addresses; one listener is bound per address.
     #[serde(default = "default_web_listen")]
     pub listen: Vec<String>,
@@ -18,14 +19,14 @@ pub struct WebConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct HttpsConfig {
+pub(crate) struct HttpsConfig {
     pub listen: Vec<String>,
     pub cert: PathBuf,
     pub key: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SshConfig {
+pub(crate) struct SshConfig {
     #[serde(default = "default_ssh_listen")]
     pub listen: Vec<String>,
     #[serde(default = "default_ssh_host_key")]
@@ -33,7 +34,7 @@ pub struct SshConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct PersistConfig {
+pub(crate) struct PersistConfig {
     #[serde(default = "default_persist_path")]
     pub path: PathBuf,
     /// Snapshot interval in seconds.
@@ -43,7 +44,7 @@ pub struct PersistConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct NftablesConfig {
+pub(crate) struct NftablesConfig {
     pub family: NfFamily,
     pub table: String,
     /// IPv4 client src -> mark map.
@@ -64,13 +65,13 @@ impl Default for NftablesConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct PortalHosts {
+pub(crate) struct PortalHosts {
     pub v4_host: Option<String>,
     pub v6_host: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct PortalConfig {
+pub(crate) struct PortalConfig {
     /// Split-horizon hostnames used by the dual-stack single-page UI: each one
     /// must resolve to a single address family so the browser reveals (and the
     /// backend registers) the client's address for that family.
@@ -90,12 +91,12 @@ pub struct PortalConfig {
 }
 
 impl PortalConfig {
-    pub fn cors_domains(&self) -> Vec<String> {
+    pub(crate) fn cors_domains(&self) -> Vec<String> {
         let mut domains = Vec::new();
-        if let Some(domain) = self.cors_domain.as_deref() {
-            if !domain.is_empty() {
-                domains.push(domain.to_owned());
-            }
+        if let Some(domain) = self.cors_domain.as_deref()
+            && !domain.is_empty()
+        {
+            domains.push(domain.to_owned());
         }
         for domain in &self.cors_domains {
             if !domain.is_empty() && !domains.contains(domain) {
@@ -107,7 +108,7 @@ impl PortalConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct OutletGroup {
+pub(crate) struct OutletGroup {
     pub title: String,
     pub mask: u32,
     pub outlets: IndexMap<String, u32>,
@@ -123,7 +124,7 @@ pub struct OutletGroup {
 }
 
 impl OutletGroup {
-    pub fn outlets_for(&self, family: u8) -> &IndexMap<String, u32> {
+    pub(crate) fn outlets_for(&self, family: u8) -> &IndexMap<String, u32> {
         if family == 6 {
             &self.outlets_v6
         } else {
@@ -132,7 +133,7 @@ impl OutletGroup {
     }
 
     /// Name of this group's outlet whose mark matches `mark` under the mask.
-    pub fn selection_for(&self, mark: u32, family: u8) -> Option<&str> {
+    pub(crate) fn selection_for(&self, mark: u32, family: u8) -> Option<&str> {
         let masked = mark & self.mask;
         self.outlets_for(family)
             .iter()
@@ -140,7 +141,7 @@ impl OutletGroup {
             .map(|(name, _)| name.as_str())
     }
 
-    pub fn display_outlets_for(&self, family: u8) -> Vec<(&str, u32)> {
+    pub(crate) fn display_outlets_for(&self, family: u8) -> Vec<(&str, u32)> {
         let outlets = self.outlets_for(family);
         let mut ordered: Vec<(&str, u32)> = Vec::with_capacity(outlets.len());
         let mut cn: Vec<(&str, u32)> = Vec::new();
@@ -156,7 +157,7 @@ impl OutletGroup {
     }
 }
 
-pub fn duration_label(hours: u32) -> String {
+pub(crate) fn duration_label(hours: u32) -> String {
     if hours == 0 {
         "永久".into()
     } else {
@@ -165,7 +166,7 @@ pub fn duration_label(hours: u32) -> String {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct AppConfig {
+pub(crate) struct AppConfig {
     pub web: Option<WebConfig>,
     pub ssh: Option<SshConfig>,
     pub persist: Option<PersistConfig>,
@@ -178,7 +179,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn map_for(&self, family: u8) -> Option<&str> {
+    pub(crate) fn map_for(&self, family: u8) -> Option<&str> {
         if family == 6 {
             self.nftables.map_v6.as_deref()
         } else {
@@ -229,90 +230,8 @@ fn default_persist_interval() -> u64 {
     300
 }
 
-fn load_toml(path: &Path) -> Result<Value> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read config file {}", path.display()))?;
-    let table: toml::Table = content
-        .parse()
-        .with_context(|| format!("Failed to parse config file {}", path.display()))?;
-    Ok(Value::Table(table))
-}
-
-/// Merge `outlet_groups` arrays by group title; unmatched groups are appended.
-fn merge_outlet_groups(base: Vec<Value>, other: Vec<Value>) -> Vec<Value> {
-    let mut merged = base;
-    for group in other {
-        let title = group
-            .get("title")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let existing = title.as_deref().and_then(|title| {
-            merged
-                .iter_mut()
-                .find(|g| g.get("title").and_then(Value::as_str) == Some(title))
-        });
-        match existing {
-            Some(slot) => merge_in_place(slot, group, None),
-            None => merged.push(group),
-        }
-    }
-    merged
-}
-
-/// `deep_merge` into an occupied slot without cloning the base value.
-fn merge_in_place(slot: &mut Value, other: Value, key: Option<&str>) {
-    let base = std::mem::replace(slot, Value::Boolean(false));
-    *slot = deep_merge(base, other, key);
-}
-
-/// Recursive merge with Python-dict semantics: tables merge per key (keeping
-/// the base key order), `outlet_groups` arrays merge by title, and any other
-/// value (including plain arrays) is replaced by the override.
-fn deep_merge(base: Value, other: Value, key: Option<&str>) -> Value {
-    match (base, other) {
-        (Value::Array(b), Value::Array(o)) if key == Some("outlet_groups") => {
-            Value::Array(merge_outlet_groups(b, o))
-        }
-        (Value::Table(mut b), Value::Table(o)) => {
-            for (k, v) in o {
-                match b.get_mut(&k) {
-                    Some(slot) => merge_in_place(slot, v, Some(&k)),
-                    None => {
-                        b.insert(k, v);
-                    }
-                }
-            }
-            Value::Table(b)
-        }
-        (_, o) => o,
-    }
-}
-
-pub fn load_config(path: &Path, config_dir: Option<&Path>) -> Result<AppConfig> {
-    if !path.is_file() {
-        bail!("Failed to load config: {} not found", path.display());
-    }
-    let mut data = load_toml(path)?;
-
-    let default_config_dir = path.parent().unwrap_or(Path::new(".")).join("config.d");
-    let config_dir = config_dir.unwrap_or(&default_config_dir);
-    if config_dir.exists() && !config_dir.is_dir() {
-        bail!(
-            "Failed to load config: {} is not a directory",
-            config_dir.display()
-        );
-    }
-    if config_dir.is_dir() {
-        let mut fragments: Vec<PathBuf> = std::fs::read_dir(&config_dir)?
-            .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "toml"))
-            .collect();
-        fragments.sort_by_key(|p| p.file_name().map(|n| n.to_owned()));
-        for fragment in fragments {
-            data = deep_merge(data, load_toml(&fragment)?, None);
-        }
-    }
-
+pub(crate) fn load_config(path: &Path, config_dir: Option<&Path>) -> Result<AppConfig> {
+    let data = load_merged_toml(path, config_dir, None)?;
     let config: AppConfig =
         AppConfig::deserialize(data).context("Failed to validate merged config")?;
     config.validate()?;

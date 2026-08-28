@@ -22,7 +22,9 @@
         version = "2.0.0";
         src = ./.;
 
-        cargoHash = "sha256-NI4Mv60Qn0lW2+EleSuPtVErcDKSzQq8FPoL6NA6q0Y=";
+        cargoHash = "sha256-9BxeBuAYIF+KEzfNduIPrd2WV2EEDT5BwK4rdlCZeu4=";
+        cargoBuildFlags = ["--bins"];
+        cargoCheckFlags = ["--all-targets"];
 
         nativeBuildInputs = [pkgs.makeWrapper];
         postInstall = ''
@@ -50,6 +52,7 @@
       default = nixpkgs.legacyPackages.${system}.mkShell {
         packages = with nixpkgs.legacyPackages.${system}; [
           cargo
+          clippy
           rustc
           rustfmt
         ];
@@ -59,5 +62,35 @@
     formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
 
     nixosModules.default = import ./nixos-module.nix {inherit self;};
+
+    checks = forAllSystems (system: let
+      pkgs = nixpkgs.legacyPackages.${system};
+      configFile = pkgs.writeText "wlt-dns.toml" "";
+      evaluated = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          self.nixosModules.default
+          {
+            system.stateVersion = "26.05";
+            services.wltDns = {
+              enable = true;
+              inherit configFile;
+              configDirectory = "/etc/wlt/config.d";
+              uid = 398;
+            };
+          }
+        ];
+      };
+      service = evaluated.config.systemd.services.wlt-dns;
+    in {
+      nixos-module = assert !evaluated.config.services.wlt.enable;
+      assert evaluated.config.users.users.wlt-dns.uid == 398;
+      assert evaluated.config.users.groups.wlt-dns.gid == 398;
+      assert nixpkgs.lib.hasInfix "/bin/wlt-dns" service.serviceConfig.ExecStart;
+      assert nixpkgs.lib.hasInfix "wlt-dns.toml" service.serviceConfig.ExecStart;
+      assert nixpkgs.lib.hasInfix "--config-dir" service.serviceConfig.ExecStart;
+      assert nixpkgs.lib.elem "CAP_NET_ADMIN" service.serviceConfig.AmbientCapabilities;
+        pkgs.runCommand "wlt-nixos-module-check" {} "touch $out";
+    });
   };
 }

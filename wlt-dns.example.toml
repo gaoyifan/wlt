@@ -1,0 +1,81 @@
+[server]
+# Use one specific listener per advertised gateway/service address. FREEBIND lets
+# the daemon start before an explicitly configured overlay address appears.
+listen = ["192.0.2.53:53", "198.51.100.53:53", "[2001:db8::53]:53"]
+max_response_ttl = 60
+max_udp_payload = 1232
+max_dns_message = 65535
+max_doh_body = 65535
+max_tcp_connections = 512
+max_tcp_connections_per_client = 64
+max_inflight_queries = 2048
+tcp_idle_timeout_seconds = 30
+shutdown_timeout_seconds = 10
+
+[policy]
+table = "router"
+ipv4_map = "src2mark"
+ipv6_map = "src2mark6"
+default_eligible_interfaces = ["br-lan"]
+ipv4_default_mark = 0x100100
+ipv6_default_mark = 0xffffff
+
+[[local_routes]]
+name = "local-dhcp"
+domains = ["lan.example.com"]
+unqualified = true
+reverse_cidrs = ["192.0.2.0/24", "198.51.100.0/24"]
+servers = ["127.0.0.1:1053"]
+timeout_milliseconds = 2000
+
+[dns_servers.aliyun]
+protocol = "udp"
+ipv4_endpoints = ["223.5.5.5:53", "223.6.6.6:53"]
+ipv6_endpoints = ["[2400:3200::1]:53", "[2400:3200:baba::1]:53"]
+
+[dns_servers.cloudflare]
+protocol = "https"
+ipv4_endpoints = ["1.1.1.1:443", "1.0.0.1:443"]
+ipv6_endpoints = ["[2606:4700:4700::1111]:443", "[2606:4700:4700::1001]:443"]
+tls_name = "cloudflare-dns.com"
+http_path = "/dns-query"
+
+[[outlet_groups]]
+title = "国内出口"
+mask = 0xfff000
+dns_server = "aliyun"
+default = false
+domain_files = []
+ip_files = ["/etc/wlt/chnroutes.txt", "/etc/wlt/china6.txt"]
+[outlet_groups.outlets]
+"默认" = 0
+"CN 杭州 | 阿里云" = 0x160000
+[outlet_groups.outlets_v6]
+"默认" = 0
+"CN 杭州 | 阿里云" = 0x160000
+
+[[outlet_groups]]
+title = "海外出口"
+mask = 0xfff
+dns_server = "cloudflare"
+default = true
+domain_files = []
+ip_files = []
+[outlet_groups.outlets]
+"默认" = 0
+"CN 杭州 | 阿里云" = 0x160
+[outlet_groups.outlets_v6]
+"默认" = 0
+"CN 杭州 | 阿里云" = 0x160
+
+# Overrides are checked in order. The first matching outlet-name regex wins.
+[[outlet_groups.overrides]]
+outlet_regex = "^CN "
+dns_server = "aliyun"
+
+[cache]
+max_entries = 10000
+max_weight_bytes = 67108864
+
+[metrics]
+listen = "127.0.0.1:9421"

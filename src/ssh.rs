@@ -319,7 +319,7 @@ where
     Ok(())
 }
 
-pub async fn serve(state: AppState, cfg: SshConfig) -> Result<()> {
+pub(crate) async fn serve(state: AppState, cfg: SshConfig) -> Result<()> {
     let host_key = load_or_generate_host_key(&cfg.host_key)?;
     let config = Arc::new(russh::server::Config {
         keys: vec![host_key],

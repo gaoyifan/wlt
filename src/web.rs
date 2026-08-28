@@ -346,7 +346,7 @@ async fn serve_https(router: Router, listen: String, tls: RustlsConfig) -> Resul
         .context("https server failed")
 }
 
-pub async fn serve(state: AppState, cfg: WebConfig) -> Result<()> {
+pub(crate) async fn serve(state: AppState, cfg: WebConfig) -> Result<()> {
     let router = router(state);
     let mut listeners: JoinSet<Result<()>> = JoinSet::new();
     for listen in cfg.listen {

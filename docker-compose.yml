@@ -7,7 +7,7 @@ services:
     volumes:
       - ./config.toml:/app/config.toml:ro
       - ./config.d:/app/config.d:ro
-      - /etc/ssl/private/yfgao:/etc/ssl/private/yfgao:ro
+      - /etc/ssl/private/wlt:/etc/ssl/private/wlt:ro
       - /etc/nftables:/etc/nftables
       - wlt-ssh-data:/data
     network_mode: host

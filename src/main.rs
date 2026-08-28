@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod config_file;
 mod nft;
 mod persist;
 mod ssh;

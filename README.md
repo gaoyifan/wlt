@@ -17,7 +17,7 @@
 
 ## 功能特点
 
-*   **单一二进制**：一个 `wlt` 可执行文件，按配置启用 Web 门户（HTTP/HTTPS）、SSH TUI 与持久化服务，全部跑在同一个进程内。
+*   **控制面与 DNS 数据面隔离**：`wlt` 承载 Web/SSH/persist 控制面；可选的 `wlt-dns` 是独立进程，共用版本与出口 mark 语义。
 *   **Nftables 深度结合**：通过 nftables JSON API 直接操作 Nftables Map，以此作为唯一数据源，不依赖任何外部数据库，确保状态绝对一致。
 *   **Web 界面管理**：简洁的网页 UI，展示当前 IP、主机名及当前连接的出口状态；支持双栈（IPv4/IPv6）分栏管理。
 *   **SSH 终端管理**：`ssh -p 2222 <host>` 免认证进入交互式菜单，适合无浏览器环境。
@@ -201,6 +201,62 @@ docker compose up -d
 cargo test          # 单元测试
 cargo run -- --config config.toml
 ```
+
+### wlt-dns
+
+`wlt-dns` 是面向 Linux 路由器的 split-forwarding DNS 数据面。它直接绑定
+配置中的每个 LAN/WG/Nylon 地址（不使用 DNAT），按客户端地址实时读取 WLT
+nftables map，并在连接公网 DNS 前设置对应的 `SO_MARK`。本地域名可以直接路由
+到 dnsmasq 或其他 literal-IP backend。公网 A 和 AAAA 查询会同时使用 IPv4 与
+IPv6 上游端点；A 优先采用 IPv4 传输的结果，AAAA 优先采用 IPv6 传输的结果，
+首选传输失败时使用已经并行发起的另一族查询。其他查询类型沿用客户端连接的
+地址族。与 WLT 一样，DNS 分流也由 `outlet_groups` 描述；每组沿用
+`title`、`mask`、`outlets` 和 `outlets_v6`，并选择一个命名的 `dns_server`。
+路由 mark 会按组 mask 的最低有效位归一化。`wlt-dns --config-dir` 可直接读取 WLT
+的补充配置目录，但只导入其中的 `outlet_groups`，因此 Nylon 等动态出口不必维护
+第二份名称与 mark 清单。
+
+组内 `overrides` 可以按所选出口名称的正则表达式更换 DNS server；规则按配置顺序
+匹配，第一条命中生效。例如让“海外出口”组中名称以 `CN ` 开头的出口改用 Aliyun：
+
+```toml
+[[outlet_groups.overrides]]
+outlet_regex = "^CN "
+dns_server = "aliyun"
+```
+
+override 只替换该出口组使用的 DNS server，不改变组的 mask、地址分类或默认组语义。
+`server.max_response_ttl` 只限制返回给客户端的记录 TTL；内部缓存仍按上游的原始
+TTL 过期，避免客户端在切换出口后长期使用旧出口对应的解析结果。
+
+配置示例见 [`wlt-dns.example.toml`](wlt-dns.example.toml)：
+
+```bash
+cargo run --bin wlt-dns -- --config wlt-dns.example.toml --config-dir config.d
+```
+
+Flake 的 `nixosModules.default` 同时提供相互独立的 `services.wlt` 与
+`services.wltDns`。需要两个进程共用 package 和补充配置目录时显式同源配置：
+
+```nix
+{config, inputs, ...}: {
+  imports = [inputs.wlt.nixosModules.default];
+
+  services.wlt.configDirectory = "/var/lib/wlt/config.d";
+  services.wltDns = {
+    enable = true;
+    package = config.services.wlt.package;
+    configFile = ./wlt-dns.toml;
+    configDirectory = config.services.wlt.configDirectory;
+    # 仅在 nftables/RPDB 规则需要匹配固定 UID 时设置。
+    uid = 398;
+  };
+}
+```
+
+生产环境需要 `CAP_NET_BIND_SERVICE`（监听 53）与 `CAP_NET_ADMIN`
+（读取 netfilter netlink 和设置 `SO_MARK`）。监听地址、客户端入口和 1053
+backend 的暴露范围应由 edge firewall 管理；`wlt-dns` 不重复实现 ACL。
 
 ## 持久化与注意事项
 

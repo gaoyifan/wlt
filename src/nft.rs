@@ -13,7 +13,7 @@ use nftables::types::NfFamily;
 use crate::config::NftablesConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NftEntry {
+pub(crate) struct NftEntry {
     pub ip: String,
     pub mark: u32,
     pub timeout: Option<u32>,
@@ -21,12 +21,12 @@ pub struct NftEntry {
 }
 
 #[derive(Debug, Clone)]
-pub struct Nft {
+pub(crate) struct Nft {
     family: NfFamily,
     table: String,
 }
 
-pub fn family_str(family: NfFamily) -> &'static str {
+pub(crate) fn family_str(family: NfFamily) -> &'static str {
     match family {
         NfFamily::IP => "ip",
         NfFamily::IP6 => "ip6",
@@ -77,23 +77,23 @@ fn expr_to_mark(expr: &Expression) -> Option<u32> {
 }
 
 impl Nft {
-    pub fn new(config: &NftablesConfig) -> Self {
+    pub(crate) fn new(config: &NftablesConfig) -> Self {
         Self {
             family: config.family,
             table: config.table.clone(),
         }
     }
 
-    pub fn family_str(&self) -> &'static str {
+    pub(crate) fn family_str(&self) -> &'static str {
         family_str(self.family)
     }
 
-    pub fn table(&self) -> &str {
+    pub(crate) fn table(&self) -> &str {
         &self.table
     }
 
     /// All entries of the given map, in listing order.
-    pub async fn list_entries(&self, map_name: &str) -> Result<Vec<NftEntry>> {
+    pub(crate) async fn list_entries(&self, map_name: &str) -> Result<Vec<NftEntry>> {
         let args = ["list", "map", self.family_str(), &self.table, map_name];
         let ruleset = helper::get_current_ruleset_with_args_async(DEFAULT_NFT, &args)
             .await
@@ -136,7 +136,7 @@ impl Nft {
         Ok(entries)
     }
 
-    pub async fn get_entry(&self, ip: &str, map_name: &str) -> Result<Option<NftEntry>> {
+    pub(crate) async fn get_entry(&self, ip: &str, map_name: &str) -> Result<Option<NftEntry>> {
         let entries = self.list_entries(map_name).await?;
         Ok(entries.into_iter().find(|entry| entry.ip == ip))
     }
@@ -164,7 +164,13 @@ impl Nft {
         Ok(())
     }
 
-    pub async fn add_element(&self, ip: &str, mark: u32, hours: u32, map_name: &str) -> Result<()> {
+    pub(crate) async fn add_element(
+        &self,
+        ip: &str,
+        mark: u32,
+        hours: u32,
+        map_name: &str,
+    ) -> Result<()> {
         let ip_expr = Expression::String(Cow::Owned(ip.to_owned()));
         let key = if hours > 0 {
             Expression::Named(NamedExpression::Elem(expr::Elem {
@@ -183,7 +189,7 @@ impl Nft {
     }
 
     /// Remove the entry for `ip` if present; missing entries are a no-op.
-    pub async fn delete_element(&self, ip: &str, map_name: &str) -> Result<()> {
+    pub(crate) async fn delete_element(&self, ip: &str, map_name: &str) -> Result<()> {
         let Some(entry) = self.get_entry(ip, map_name).await? else {
             return Ok(());
         };
