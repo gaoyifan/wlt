@@ -15,6 +15,7 @@ use netlink_packet_netfilter::{
     },
 };
 use netlink_proto::{ConnectionHandle, sys};
+use nftables::types::NfFamily;
 use rtnetlink::{
     Handle as RouteHandle, RouteMessageBuilder,
     packet_route::{
@@ -32,12 +33,13 @@ const PACKED_MARK_MASK: u32 = 0x00ff_ffff;
 
 /// Linux policy source backed by exact nftables map lookups and FIB queries.
 pub(super) struct NftWltPolicy {
+    family: NetfilterProtoFamily,
     table: String,
-    ipv4_map: String,
+    ipv4_map: Option<String>,
     ipv6_map: Option<String>,
     default_eligible_interfaces: HashSet<String>,
     mark_masks: Vec<u32>,
-    ipv4_default_mark: u32,
+    ipv4_default_mark: Option<u32>,
     ipv6_default_mark: Option<u32>,
     nft: ConnectionHandle<NetfilterMessage>,
     route: RouteHandle,
@@ -61,6 +63,7 @@ impl NftWltPolicy {
         runtime.spawn(route_connection);
 
         Ok(Self {
+            family: netfilter_family(config.family),
             table: config.table.clone(),
             ipv4_map: config.ipv4_map.clone(),
             ipv6_map: config.ipv6_map.clone(),
@@ -79,7 +82,12 @@ impl NftWltPolicy {
 
     async fn lookup_mark(&self, client: IpAddr) -> Result<Option<u32>> {
         let (map, key): (&str, Vec<u8>) = match client {
-            IpAddr::V4(address) => (&self.ipv4_map, address.octets().to_vec()),
+            IpAddr::V4(address) => {
+                let Some(map) = self.ipv4_map.as_deref() else {
+                    return Ok(None);
+                };
+                (map, address.octets().to_vec())
+            }
             IpAddr::V6(address) => {
                 let Some(map) = self.ipv6_map.as_deref() else {
                     return Ok(None);
@@ -88,7 +96,7 @@ impl NftWltPolicy {
             }
         };
 
-        let request = exact_set_element_request(&self.table, map, key.clone());
+        let request = exact_set_element_request(self.family, &self.table, map, key.clone());
         let mut responses = self
             .nft
             .request(request, sys::SocketAddr::new(0, 0))
@@ -194,7 +202,7 @@ impl NftWltPolicy {
         let mark = self.lookup_mark(client).await?;
         let map_mark = mark.unwrap_or_default();
         let configured_default = match client {
-            IpAddr::V4(_) => Some(self.ipv4_default_mark),
+            IpAddr::V4(_) => self.ipv4_default_mark,
             IpAddr::V6(_) => self.ipv6_default_mark,
         };
         let default_mark = if let Some(default_mark) = configured_default
@@ -214,6 +222,7 @@ impl NftWltPolicy {
 }
 
 fn exact_set_element_request(
+    family: NetfilterProtoFamily,
     table: &str,
     set: &str,
     key: Vec<u8>,
@@ -228,11 +237,22 @@ fn exact_set_element_request(
         ],
     });
     let mut message = NetlinkMessage::from(NetfilterMessage::new(
-        NetfilterHeader::new(NetfilterProtoFamily::Inet, 0, 0),
+        NetfilterHeader::new(family, 0, 0),
         payload,
     ));
     message.header.flags = NLM_F_REQUEST;
     message
+}
+
+fn netfilter_family(family: NfFamily) -> NetfilterProtoFamily {
+    match family {
+        NfFamily::IP => NetfilterProtoFamily::IPv4,
+        NfFamily::IP6 => NetfilterProtoFamily::IPv6,
+        NfFamily::INet => NetfilterProtoFamily::Inet,
+        NfFamily::ARP => NetfilterProtoFamily::ARP,
+        NfFamily::Bridge => NetfilterProtoFamily::Bridge,
+        NfFamily::NetDev => NetfilterProtoFamily::NetDev,
+    }
 }
 
 fn route_lookup_request(client: IpAddr) -> RouteMessage {
@@ -353,19 +373,33 @@ mod tests {
     #[test]
     fn constructs_exact_set_element_lookup_without_dump() {
         let key = Ipv4Addr::new(192, 0, 2, 7).octets().to_vec();
-        let message = exact_set_element_request("home-router", "src2mark", key.clone());
+        let message = exact_set_element_request(
+            NetfilterProtoFamily::IPv4,
+            "home-router",
+            "src2mark",
+            key.clone(),
+        );
         assert_eq!(message.header.flags, NLM_F_REQUEST);
 
         let NetlinkPayload::InnerMessage(NetfilterMessage {
+            header,
             inner: NetfilterMessageInner::NfTables(NfTablesMessage::GetSetElement(message)),
             ..
         }) = message.payload
         else {
             panic!("expected NFT_MSG_GETSETELEM");
         };
+        assert_eq!(header.family, NetfilterProtoFamily::IPv4);
         assert!(message.attributes.contains(&SetElementList::Elements(vec![
             ListAttribute::Element(vec![SetElementAttribute::Key(DataAttribute::Value(key))])
         ])));
+    }
+
+    #[test]
+    fn maps_supported_nftables_families_to_netlink() {
+        assert_eq!(netfilter_family(NfFamily::INet), NetfilterProtoFamily::Inet);
+        assert_eq!(netfilter_family(NfFamily::IP), NetfilterProtoFamily::IPv4);
+        assert_eq!(netfilter_family(NfFamily::IP6), NetfilterProtoFamily::IPv6);
     }
 
     #[test]

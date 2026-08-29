@@ -6,8 +6,8 @@ over new frameworks.
 
 ## Goals
 
-1. Correct the deployment default-mark and endpoint-routing invariants before the
-   next deployment.
+1. Correct the deployment default-mark and endpoint-routing invariants before
+   the next deployment.
 2. Keep UDP exchanges out of the stateful TCP/DoH connection pool.
 3. Let the generic WLT NixOS module consume both runtime and Nix-store config
    fragment directories without downstream `ExecStart` reconstruction.
@@ -22,8 +22,9 @@ over new frameworks.
 - Verified: WLT formatting, clippy, tests, flake check and package build;
   downstream formatting, targeted evaluations, integration module check and
   the complete router VM test.
-- Release sequence: publish the immutable WLT revision, then update
-  the downstream lock file and repeat evaluation without an input override.
+- Released: WLT was published as an immutable revision, the downstream lock
+  file was pinned to it, and the target routers were deployed and verified
+  without an input override.
 
 ## WLT changes
 
@@ -39,6 +40,10 @@ over new frameworks.
   `DnsServer` name where this remains a net simplification.
 - Express route/group lookup invariants as invariants rather than recoverable
   disappearance errors.
+- Configure the nftables family explicitly and use it for exact netlink map
+  lookups, matching WLT's `inet`/`ip`/`ip6` configuration semantics.
+- Encapsulate the server's immutable configuration and shared run state in a
+  single runtime value used by UDP listeners, TCP listeners and connections.
 
 ## Downstream changes
 
@@ -58,8 +63,8 @@ over new frameworks.
 - WLT: formatting, clippy, all-target Rust tests, and flake checks.
 - Downstream: formatting, router VM test, relevant integration test, and
   representative router evaluations without `--override-input`.
-- Deployment verification remains separate from this code-fix pass and starts
-  only after the immutable WLT lock is available.
+- Deployment verification completed on the target routers after pinning the
+  immutable WLT revision.
 
 ## Explicitly deferred
 
@@ -67,7 +72,5 @@ over new frameworks.
   questions in a separate change.
 - A `PolicySource`/`QueryExchange` injection framework created only to test the
   small dual-family ordering block.
-- A server-runtime abstraction created only to reduce argument counts.
 - A central nftables classifier abstraction: each later base chain must still
   consume the DNS front-door bypass contract.
-- General non-`inet` nft-family support until a real deployment requires it.

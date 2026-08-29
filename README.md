@@ -212,6 +212,8 @@ IPv6 上游端点；A 优先采用 IPv4 传输的结果，AAAA 优先采用 IPv6
 首选传输失败时使用已经并行发起的另一族查询。其他查询类型沿用客户端连接的
 地址族。与 WLT 一样，DNS 分流也由 `outlet_groups` 描述；每组沿用
 `title`、`mask`、`outlets` 和 `outlets_v6`，并选择一个命名的 `dns_server`。
+`[policy].family` 与 WLT 的 `[nftables].family` 使用相同的 `inet`、`ip`、`ip6`
+取值；单族 table 只配置对应地址族的 client map，默认值为 `inet`。
 路由 mark 会按组 mask 的最低有效位归一化。`wlt-dns --config-dir` 可直接读取 WLT
 的补充配置目录，但只导入其中的 `outlet_groups`，因此 Nylon 等动态出口不必维护
 第二份名称与 mark 清单。

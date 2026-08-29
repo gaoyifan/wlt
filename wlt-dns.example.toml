@@ -13,12 +13,13 @@ tcp_idle_timeout_seconds = 30
 shutdown_timeout_seconds = 10
 
 [policy]
+family = "inet"
 table = "router"
 ipv4_map = "src2mark"
 ipv6_map = "src2mark6"
 default_eligible_interfaces = ["br-lan"]
-ipv4_default_mark = 0x100100
-ipv6_default_mark = 0xffffff
+ipv4_default_mark = 0x100
+ipv6_default_mark = 0xfff
 
 [[local_routes]]
 name = "local-dhcp"

@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     future::Future,
     io,
     net::SocketAddr,
@@ -8,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, Result, anyhow, bail, ensure};
+use anyhow::{Context as _, Result, anyhow, bail};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use hickory_net::{
@@ -171,6 +172,7 @@ async fn send_hickory(handle: DnsExchange<MarkedRuntime>, message: Message) -> R
 #[derive(Clone)]
 struct DohClient {
     client: Client<HttpsConnector<LiteralConnector>, Full<Bytes>>,
+    endpoint: SocketAddr,
     uri: Uri,
     max_body: usize,
 }
@@ -199,9 +201,20 @@ impl DohClient {
             .build(https);
         Ok(Self {
             client,
+            endpoint: target.endpoint,
             uri,
             max_body,
         })
+    }
+
+    fn warn_invalid_response(&self, reason: &'static str, detail: impl fmt::Display) {
+        tracing::warn!(
+            endpoint = %self.endpoint,
+            uri = %self.uri,
+            reason,
+            %detail,
+            "DoH upstream response rejected"
+        );
     }
 
     async fn exchange(&self, message: Message, timeout: Duration) -> Result<Message> {
@@ -215,6 +228,7 @@ impl DohClient {
                 .body(Full::new(Bytes::from(body)))?;
             let response = self.client.request(request).await?;
             if !response.status().is_success() {
+                self.warn_invalid_response("http_status", response.status());
                 bail!("DoH upstream returned HTTP {}", response.status());
             }
             let content_type = response
@@ -226,35 +240,54 @@ impl DohClient {
             if !content_type
                 .is_some_and(|value| value.eq_ignore_ascii_case("application/dns-message"))
             {
+                self.warn_invalid_response("content_type", content_type.unwrap_or("<missing>"));
                 bail!("DoH upstream returned an invalid content type");
             }
-            if response
+            if let Some(content_length) = response
                 .headers()
                 .get(header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<usize>().ok())
-                .is_some_and(|length| length > self.max_body)
+                .filter(|length| *length > self.max_body)
             {
+                self.warn_invalid_response(
+                    "body_too_large",
+                    format_args!(
+                        "declared {content_length} bytes; limit is {}",
+                        self.max_body
+                    ),
+                );
                 bail!("DoH response exceeds configured body limit");
             }
-            let body = Limited::new(response.into_body(), self.max_body)
+            let body = match Limited::new(response.into_body(), self.max_body)
                 .collect()
                 .await
-                .map_err(|error| anyhow!("read bounded DoH response: {error}"))?
-                .to_bytes();
-            let response = DnsResponse::from_buffer(body.to_vec())?.into_message();
-            ensure!(
-                response.metadata.message_type == hickory_proto::op::MessageType::Response,
-                "DoH upstream returned a non-response DNS message"
-            );
-            ensure!(
-                response.metadata.id == expected_id,
-                "DoH upstream returned a mismatched DNS ID"
-            );
-            ensure!(
-                response.queries == expected_queries,
-                "DoH upstream returned a mismatched DNS question"
-            );
+            {
+                Ok(body) => body.to_bytes(),
+                Err(error) => {
+                    self.warn_invalid_response("body_read_or_limit", &error);
+                    return Err(anyhow!("read bounded DoH response: {error}"));
+                }
+            };
+            let response = match DnsResponse::from_buffer(body.to_vec()) {
+                Ok(response) => response.into_message(),
+                Err(error) => {
+                    self.warn_invalid_response("dns_wire", &error);
+                    return Err(error.into());
+                }
+            };
+            if response.metadata.message_type != hickory_proto::op::MessageType::Response {
+                self.warn_invalid_response("dns_message_type", "message is not a response");
+                bail!("DoH upstream returned a non-response DNS message");
+            }
+            if response.metadata.id != expected_id {
+                self.warn_invalid_response("dns_id", "mismatched response ID");
+                bail!("DoH upstream returned a mismatched DNS ID");
+            }
+            if response.queries != expected_queries {
+                self.warn_invalid_response("dns_question", "mismatched response question");
+                bail!("DoH upstream returned a mismatched DNS question");
+            }
             Ok(response)
         })
         .await

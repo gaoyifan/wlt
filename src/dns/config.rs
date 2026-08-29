@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, ensure};
 use indexmap::IndexMap;
 use ipnet::IpNet;
+use nftables::types::NfFamily;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -193,35 +194,61 @@ impl ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PolicyConfig {
+    #[serde(default = "default_nft_family")]
+    pub family: NfFamily,
     pub table: String,
-    pub ipv4_map: String,
+    pub ipv4_map: Option<String>,
     pub ipv6_map: Option<String>,
     #[serde(default)]
     pub default_eligible_interfaces: Vec<String>,
-    pub ipv4_default_mark: u32,
+    pub ipv4_default_mark: Option<u32>,
     pub ipv6_default_mark: Option<u32>,
 }
 
 impl PolicyConfig {
     fn validate(&self) -> Result<()> {
         ensure!(
+            matches!(self.family, NfFamily::INet | NfFamily::IP | NfFamily::IP6),
+            "policy.family must be inet, ip, or ip6"
+        );
+        ensure!(
             !self.table.trim().is_empty(),
             "policy.table cannot be empty"
         );
         ensure!(
-            !self.ipv4_map.trim().is_empty(),
-            "policy.ipv4_map cannot be empty"
+            self.ipv4_map.is_some() == self.ipv4_default_mark.is_some(),
+            "policy.ipv4_map and policy.ipv4_default_mark must be configured together"
         );
         ensure!(
             self.ipv6_map.is_some() == self.ipv6_default_mark.is_some(),
             "policy.ipv6_map and policy.ipv6_default_mark must be configured together"
         );
+        if let Some(map) = &self.ipv4_map {
+            ensure!(!map.trim().is_empty(), "policy.ipv4_map cannot be empty");
+        }
         if let Some(map) = &self.ipv6_map {
             ensure!(!map.trim().is_empty(), "policy.ipv6_map cannot be empty");
+        }
+        if let (Some(ipv4_map), Some(ipv6_map)) = (&self.ipv4_map, &self.ipv6_map) {
             ensure!(
-                map != &self.ipv4_map,
+                ipv4_map != ipv6_map,
                 "policy IPv4 and IPv6 map names must differ"
             );
+        }
+        match self.family {
+            NfFamily::INet => ensure!(
+                self.ipv4_map.is_some() || self.ipv6_map.is_some(),
+                "inet policy needs at least one client map"
+            ),
+            NfFamily::IP => ensure!(
+                self.ipv4_map.is_some() && self.ipv6_map.is_none(),
+                "ip policy needs only the IPv4 client map"
+            ),
+            NfFamily::IP6 => ensure!(
+                self.ipv4_map.is_none() && self.ipv6_map.is_some(),
+                "ip6 policy needs only the IPv6 client map"
+            ),
+            _ => unreachable!("validated nftables family"),
         }
         let mut interfaces = HashSet::new();
         for interface in &self.default_eligible_interfaces {
@@ -236,6 +263,10 @@ impl PolicyConfig {
         }
         Ok(())
     }
+}
+
+fn default_nft_family() -> NfFamily {
+    NfFamily::INet
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -547,6 +578,7 @@ tcp_idle_timeout_seconds = 30
 shutdown_timeout_seconds = 10
 
 [policy]
+family = "inet"
 table = "wlt"
 ipv4_map = "src2mark"
 ipv6_map = "src2mark6"
@@ -607,12 +639,53 @@ dns_server = "regional"
     #[test]
     fn parses_strict_config_and_applies_defaults() {
         let config = DnsConfig::parse(VALID).unwrap();
+        assert_eq!(config.policy.family, NfFamily::INet);
         assert_eq!(config.cache.max_entries, 10_000);
         assert_eq!(config.cache.max_weight_bytes, 64 * 1024 * 1024);
         assert_eq!(config.metrics.listen, "127.0.0.1:9421".parse().unwrap());
         assert_eq!(
             config.local_routes[0].reverse_cidrs[0],
             "10.0.0.0/8".parse::<IpNet>().unwrap()
+        );
+    }
+
+    #[test]
+    fn validates_policy_family_and_client_maps() {
+        let defaulted = VALID.replace("family = \"inet\"\n", "");
+        assert_eq!(
+            DnsConfig::parse(&defaulted).unwrap().policy.family,
+            NfFamily::INet
+        );
+
+        let ipv4 = VALID
+            .replace("family = \"inet\"", "family = \"ip\"")
+            .replace("ipv6_map = \"src2mark6\"\n", "")
+            .replace("ipv6_default_mark = 0x0404\n", "");
+        assert_eq!(DnsConfig::parse(&ipv4).unwrap().policy.family, NfFamily::IP);
+
+        let ipv6 = VALID
+            .replace("family = \"inet\"", "family = \"ip6\"")
+            .replace("ipv4_map = \"src2mark\"\n", "")
+            .replace("ipv4_default_mark = 0x0202\n", "");
+        assert_eq!(
+            DnsConfig::parse(&ipv6).unwrap().policy.family,
+            NfFamily::IP6
+        );
+
+        let mixed = VALID.replace("family = \"inet\"", "family = \"ip\"");
+        assert!(
+            DnsConfig::parse(&mixed)
+                .unwrap_err()
+                .to_string()
+                .contains("only the IPv4 client map")
+        );
+
+        let unsupported = VALID.replace("family = \"inet\"", "family = \"bridge\"");
+        assert!(
+            DnsConfig::parse(&unsupported)
+                .unwrap_err()
+                .to_string()
+                .contains("must be inet, ip, or ip6")
         );
     }
 

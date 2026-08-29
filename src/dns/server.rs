@@ -30,6 +30,53 @@ pub(super) struct DnsServer {
     metrics: DnsMetrics,
 }
 
+#[derive(Clone)]
+struct ServerRuntime {
+    config: Arc<ServerConfig>,
+    handler: Arc<DnsFrontend>,
+    metrics: DnsMetrics,
+    inflight: Arc<Semaphore>,
+    tcp_connections: Arc<Semaphore>,
+    client_connections: Arc<ClientConnections>,
+    tasks: TaskTracker,
+    shutdown: CancellationToken,
+}
+
+impl ServerRuntime {
+    fn new(
+        config: ServerConfig,
+        handler: Arc<DnsFrontend>,
+        metrics: DnsMetrics,
+        shutdown: CancellationToken,
+    ) -> Self {
+        let config = Arc::new(config);
+        Self {
+            inflight: Arc::new(Semaphore::new(config.max_inflight_queries)),
+            tcp_connections: Arc::new(Semaphore::new(config.max_tcp_connections)),
+            client_connections: Arc::new(ClientConnections::default()),
+            tasks: TaskTracker::new(),
+            config,
+            handler,
+            metrics,
+            shutdown,
+        }
+    }
+
+    async fn wait_for_shutdown(self) {
+        self.shutdown.cancelled().await;
+        self.tasks.close();
+        if tokio::time::timeout(
+            Duration::from_secs(self.config.shutdown_timeout_seconds),
+            self.tasks.wait(),
+        )
+        .await
+        .is_err()
+        {
+            warn!("timed out draining DNS requests during shutdown");
+        }
+    }
+}
+
 impl DnsServer {
     pub(super) fn new(
         config: ServerConfig,
@@ -44,71 +91,29 @@ impl DnsServer {
     }
 
     pub(super) async fn run(self, shutdown: CancellationToken) -> Result<()> {
-        let tracker = TaskTracker::new();
-        let inflight = Arc::new(Semaphore::new(self.config.max_inflight_queries));
-        let connections = Arc::new(Semaphore::new(self.config.max_tcp_connections));
-        let clients = Arc::new(ClientConnections::default());
+        let runtime = ServerRuntime::new(self.config, self.handler, self.metrics, shutdown);
 
-        for address in &self.config.listen {
+        for address in runtime.config.listen.iter().copied() {
             let udp =
-                bind_udp(*address).with_context(|| format!("bind UDP DNS listener {address}"))?;
+                bind_udp(address).with_context(|| format!("bind UDP DNS listener {address}"))?;
             let tcp =
-                bind_tcp(*address).with_context(|| format!("bind TCP DNS listener {address}"))?;
+                bind_tcp(address).with_context(|| format!("bind TCP DNS listener {address}"))?;
 
-            tracker.spawn(run_udp(
-                udp,
-                self.handler.clone(),
-                self.config.max_udp_payload,
-                inflight.clone(),
-                tracker.clone(),
-                self.metrics,
-                shutdown.clone(),
-            ));
-            tracker.spawn(run_tcp(
-                tcp,
-                self.handler.clone(),
-                self.config.max_dns_message,
-                self.config.max_tcp_connections_per_client,
-                Duration::from_secs(self.config.tcp_idle_timeout_seconds),
-                inflight.clone(),
-                connections.clone(),
-                clients.clone(),
-                tracker.clone(),
-                self.metrics,
-                shutdown.clone(),
-            ));
+            runtime.tasks.spawn(run_udp(udp, runtime.clone()));
+            runtime.tasks.spawn(run_tcp(tcp, runtime.clone()));
         }
 
-        shutdown.cancelled().await;
-        tracker.close();
-        if tokio::time::timeout(
-            Duration::from_secs(self.config.shutdown_timeout_seconds),
-            tracker.wait(),
-        )
-        .await
-        .is_err()
-        {
-            warn!("timed out draining DNS requests during shutdown");
-        }
+        runtime.wait_for_shutdown().await;
         Ok(())
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_udp(
-    socket: UdpSocket,
-    handler: Arc<DnsFrontend>,
-    max_payload: usize,
-    inflight: Arc<Semaphore>,
-    tracker: TaskTracker,
-    metrics: DnsMetrics,
-    shutdown: CancellationToken,
-) {
+async fn run_udp(socket: UdpSocket, runtime: ServerRuntime) {
     let socket = Arc::new(socket);
-    let mut buffer = vec![0_u8; max_payload.saturating_add(1)];
+    let mut buffer = vec![0_u8; runtime.config.max_udp_payload.saturating_add(1)];
     loop {
         let receive = tokio::select! {
-            _ = shutdown.cancelled() => break,
+            _ = runtime.shutdown.cancelled() => break,
             receive = socket.recv_from(&mut buffer) => receive,
         };
         let (length, peer) = match receive {
@@ -118,22 +123,26 @@ async fn run_udp(
                 continue;
             }
         };
-        metrics.request("udp");
-        if length > max_payload {
-            metrics.rejected("udp", "message_too_large");
+        runtime.metrics.request("udp");
+        if length > runtime.config.max_udp_payload {
+            runtime.metrics.rejected("udp", "message_too_large");
             continue;
         }
-        let Ok(permit) = inflight.clone().try_acquire_owned() else {
-            metrics.rejected("udp", "overloaded");
+        let Ok(permit) = runtime.inflight.clone().try_acquire_owned() else {
+            runtime.metrics.rejected("udp", "overloaded");
             continue;
         };
         let request = buffer[..length].to_vec();
         let socket = socket.clone();
-        let handler = handler.clone();
-        tracker.spawn(async move {
+        let task_runtime = runtime.clone();
+        runtime.tasks.spawn(async move {
             let _permit = permit;
-            let response = process_wire(&handler, peer, &request).await;
-            let response = encode_udp(response, udp_limit(&request, max_payload), metrics);
+            let response = process_wire(&task_runtime.handler, peer, &request).await;
+            let response = encode_udp(
+                response,
+                udp_limit(&request, task_runtime.config.max_udp_payload),
+                task_runtime.metrics,
+            );
             if let Some(response) = response
                 && let Err(error) = socket.send_to(&response, peer).await
             {
@@ -143,23 +152,10 @@ async fn run_udp(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_tcp(
-    listener: TcpListener,
-    handler: Arc<DnsFrontend>,
-    max_message: usize,
-    per_client_limit: usize,
-    idle_timeout: Duration,
-    inflight: Arc<Semaphore>,
-    connections: Arc<Semaphore>,
-    clients: Arc<ClientConnections>,
-    tracker: TaskTracker,
-    metrics: DnsMetrics,
-    shutdown: CancellationToken,
-) {
+async fn run_tcp(listener: TcpListener, runtime: ServerRuntime) {
     loop {
         let accepted = tokio::select! {
-            _ = shutdown.cancelled() => break,
+            _ = runtime.shutdown.cancelled() => break,
             accepted = listener.accept() => accepted,
         };
         let (stream, peer) = match accepted {
@@ -169,75 +165,64 @@ async fn run_tcp(
                 continue;
             }
         };
-        let Ok(permit) = connections.clone().try_acquire_owned() else {
-            metrics.rejected("tcp", "connection_limit");
+        let Ok(permit) = runtime.tcp_connections.clone().try_acquire_owned() else {
+            runtime.metrics.rejected("tcp", "connection_limit");
             continue;
         };
-        let Some(client_guard) = clients.acquire(peer.ip(), per_client_limit) else {
-            metrics.rejected("tcp", "client_connection_limit");
+        let Some(client_guard) = runtime
+            .client_connections
+            .acquire(peer.ip(), runtime.config.max_tcp_connections_per_client)
+        else {
+            runtime.metrics.rejected("tcp", "client_connection_limit");
             continue;
         };
-        let handler = handler.clone();
-        let inflight = inflight.clone();
-        let shutdown = shutdown.clone();
-        tracker.spawn(async move {
+        let connection_runtime = runtime.clone();
+        runtime.tasks.spawn(async move {
             let (_permit, _client_guard) = (permit, client_guard);
-            if let Err(error) = serve_tcp_connection(
-                stream,
-                peer,
-                handler,
-                max_message,
-                idle_timeout,
-                inflight,
-                metrics,
-                shutdown,
-            )
-            .await
-            {
+            if let Err(error) = serve_tcp_connection(stream, peer, connection_runtime).await {
                 debug!(%peer, %error, "TCP DNS connection closed");
             }
         });
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn serve_tcp_connection(
     stream: TcpStream,
     peer: SocketAddr,
-    handler: Arc<DnsFrontend>,
-    max_message: usize,
-    idle_timeout: Duration,
-    inflight: Arc<Semaphore>,
-    metrics: DnsMetrics,
-    shutdown: CancellationToken,
+    runtime: ServerRuntime,
 ) -> Result<()> {
     let codec = LengthDelimitedCodec::builder()
         .length_field_length(2)
-        .max_frame_length(max_message)
+        .max_frame_length(runtime.config.max_dns_message)
         .new_codec();
     let mut framed = Framed::new(stream, codec);
     loop {
         let next = tokio::select! {
-            _ = shutdown.cancelled() => return Ok(()),
-            next = tokio::time::timeout(idle_timeout, framed.next()) => next,
+            _ = runtime.shutdown.cancelled() => return Ok(()),
+            next = tokio::time::timeout(
+                Duration::from_secs(runtime.config.tcp_idle_timeout_seconds),
+                framed.next(),
+            ) => next,
         };
         let Some(frame) = next.context("TCP DNS idle timeout")? else {
             return Ok(());
         };
         let frame = frame.context("read TCP DNS frame")?;
-        metrics.request("tcp");
-        let permit = match inflight.clone().try_acquire_owned() {
+        runtime.metrics.request("tcp");
+        let permit = match runtime.inflight.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
-                metrics.rejected("tcp", "overloaded");
+                runtime.metrics.rejected("tcp", "overloaded");
                 let response = error_response(&frame, ResponseCode::ServFail).to_vec()?;
                 framed.send(Bytes::from(response)).await?;
                 continue;
             }
         };
-        let response = process_wire(&handler, peer, &frame).await;
+        let response = process_wire(&runtime.handler, peer, &frame).await;
         drop(permit);
-        metrics.response("tcp", response.metadata.response_code);
+        runtime
+            .metrics
+            .response("tcp", response.metadata.response_code);
         framed.send(Bytes::from(response.to_vec()?)).await?;
     }
 }
@@ -269,20 +254,23 @@ fn udp_limit(request: &[u8], configured: usize) -> usize {
 
 fn encode_udp(mut message: Message, limit: usize, metrics: DnsMetrics) -> Option<Vec<u8>> {
     let encoded = message.to_vec().ok()?;
-    if encoded.len() <= limit {
-        metrics.response("udp", message.metadata.response_code);
-        return Some(encoded);
-    }
-    message = message.truncate();
-    let encoded = message.to_vec().ok()?;
-    if encoded.len() <= limit {
-        return Some(encoded);
-    }
-    message.edns = None;
-    message
-        .to_vec()
-        .ok()
-        .filter(|encoded| encoded.len() <= limit)
+    let encoded = if encoded.len() <= limit {
+        encoded
+    } else {
+        message = message.truncate();
+        let encoded = message.to_vec().ok()?;
+        if encoded.len() <= limit {
+            encoded
+        } else {
+            message.edns = None;
+            message
+                .to_vec()
+                .ok()
+                .filter(|encoded| encoded.len() <= limit)?
+        }
+    };
+    metrics.response("udp", message.metadata.response_code);
+    Some(encoded)
 }
 
 fn bind_udp(address: SocketAddr) -> io::Result<UdpSocket> {
@@ -358,14 +346,23 @@ impl Drop for ClientGuard {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use hickory_proto::op::{Message, MessageType, OpCode};
+    use hickory_proto::rr::{Name, RData, Record, rdata::A};
 
     use super::{DnsMetrics, encode_udp};
 
     #[test]
     fn udp_encoder_sets_tc_and_respects_limit() {
-        let message = Message::new(7, MessageType::Response, OpCode::Query);
+        let mut message = Message::new(7, MessageType::Response, OpCode::Query);
+        message.add_answer(Record::from_rdata(
+            Name::root(),
+            60,
+            RData::A(A(Ipv4Addr::LOCALHOST)),
+        ));
         let encoded = encode_udp(message, 12, DnsMetrics).unwrap();
         assert!(encoded.len() <= 12);
+        assert!(Message::from_vec(&encoded).unwrap().metadata.truncation);
     }
 }
