@@ -166,10 +166,17 @@ impl DnsFrontend {
         }
 
         if let Some(route_name) = self.routing.lookup(query.name()) {
-            return self
-                .answer_local(route_name, request)
-                .await
-                .unwrap_or_else(|_| response_for(original_id, &query, ResponseCode::ServFail));
+            match self.answer_local(route_name, request.clone()).await {
+                Ok(response) => return response,
+                Err(error) => {
+                    tracing::debug!(
+                        %peer,
+                        route = route_name,
+                        %error,
+                        "local DNS route missed; falling back to public DNS"
+                    );
+                }
+            }
         }
 
         strip_ecs(&mut request);
@@ -240,7 +247,16 @@ impl DnsFrontend {
             match tokio::time::timeout(remaining, self.exchange.exchange(&target, request.clone()))
                 .await
             {
-                Ok(Ok(response)) => return Ok(response),
+                Ok(Ok(response)) if local_response_succeeded(&response) => {
+                    return Ok(response);
+                }
+                Ok(Ok(response)) => {
+                    last_error = Some(anyhow!(
+                        "local DNS server returned {} with {} answers",
+                        response.metadata.response_code,
+                        response.answers.len()
+                    ));
+                }
                 Ok(Err(error)) => last_error = Some(error),
                 Err(_) => last_error = Some(anyhow!("local DNS route timed out")),
             }
@@ -397,6 +413,10 @@ impl DnsFrontend {
         }
         Err(last_error.expect("non-empty endpoint list must produce an outcome"))
     }
+}
+
+fn local_response_succeeded(response: &Message) -> bool {
+    response.metadata.response_code == ResponseCode::NoError && !response.answers.is_empty()
 }
 
 fn preferred_upstream_family(query_type: RecordType, peer: IpAddr) -> AddressFamily {
@@ -568,6 +588,25 @@ mod tests {
         assert!(classifier.matches("10.1.2.3".parse().unwrap()));
         assert!(classifier.matches("2001:db8::1".parse().unwrap()));
         assert!(!classifier.matches("192.0.2.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn local_response_requires_a_successful_answer() {
+        let name = Name::from_ascii("host.example.test.").unwrap();
+        let mut answered = Message::response(1, OpCode::Query);
+        answered.add_answer(Record::from_rdata(
+            name,
+            60,
+            RData::A(A(Ipv4Addr::LOCALHOST)),
+        ));
+        assert!(local_response_succeeded(&answered));
+
+        let empty = Message::response(1, OpCode::Query);
+        assert!(!local_response_succeeded(&empty));
+
+        let mut refused = answered;
+        refused.metadata.response_code = ResponseCode::Refused;
+        assert!(!local_response_succeeded(&refused));
     }
 
     #[test]
