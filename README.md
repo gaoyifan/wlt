@@ -206,9 +206,10 @@ cargo run -- --config config.toml
 
 `wlt-dns` 是面向 Linux 路由器的 split-forwarding DNS 数据面。它直接绑定
 配置中的每个 LAN/WG/Nylon 地址（不使用 DNAT），按客户端地址实时读取 WLT
-nftables map，并在连接公网 DNS 前设置对应的 `SO_MARK`。本地域名可以直接路由
-到 dnsmasq 或其他 literal-IP backend。公网 A 和 AAAA 查询会同时使用 IPv4 与
-IPv6 上游端点；A 优先采用 IPv4 传输的结果，AAAA 优先采用 IPv6 传输的结果，
+nftables map，并在连接公网 DNS 前设置对应的 `SO_MARK`。配置域名的严格子域可以
+直接路由到 dnsmasq 或其他 literal-IP backend，域名本身仍走公网解析。公网 A 和
+AAAA 查询会同时使用 IPv4 与 IPv6 上游端点；A 优先采用 IPv4 传输的结果，AAAA
+优先采用 IPv6 传输的结果，
 首选传输失败时使用已经并行发起的另一族查询。其他查询类型沿用客户端连接的
 地址族。与 WLT 一样，DNS 分流也由 `outlet_groups` 描述；每组沿用
 `title`、`mask`、`outlets` 和 `outlets_v6`，并选择一个命名的 `dns_server`。

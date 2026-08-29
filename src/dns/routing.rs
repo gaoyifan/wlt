@@ -15,21 +15,21 @@ use super::config::{DnsOutletGroupConfig, LocalRouteConfig};
 /// Routes local names and reverse lookups to a named local route.
 #[derive(Debug)]
 pub(super) struct RoutingTable {
-    domains: SuffixTable,
+    subdomains: SuffixTable,
     unqualified: Option<String>,
     reverse: JointPrefixMap<IpNet, String>,
 }
 
 impl RoutingTable {
     pub(super) fn new(routes: &[LocalRouteConfig]) -> Result<Self> {
-        let mut domains = SuffixTable::default();
+        let mut subdomains = SuffixTable::default();
         let mut unqualified = None;
         let mut reverse = JointPrefixMap::new();
 
         for route in routes {
-            for domain in &route.domains {
-                domains.insert(domain, &route.name).with_context(|| {
-                    format!("invalid domain route {domain:?} in {}", route.name)
+            for domain in &route.subdomains {
+                subdomains.insert(domain, &route.name).with_context(|| {
+                    format!("invalid subdomain route {domain:?} in {}", route.name)
                 })?;
             }
             if route.unqualified {
@@ -60,7 +60,7 @@ impl RoutingTable {
         }
 
         Ok(Self {
-            domains,
+            subdomains,
             unqualified,
             reverse,
         })
@@ -77,7 +77,7 @@ impl RoutingTable {
         if name.iter().count() == 1 {
             return self.unqualified.as_deref();
         }
-        self.domains.lookup(name)
+        self.subdomains.lookup_subdomain(name)
     }
 
     fn lookup_reverse(&self, address: IpAddr) -> Option<&str> {
@@ -150,6 +150,14 @@ impl SuffixTable {
         let name = canonical_name(name);
         let label_count = name.iter().count();
         (1..=label_count)
+            .rev()
+            .find_map(|labels| self.entries.get(&name.trim_to(labels)).map(String::as_str))
+    }
+
+    fn lookup_subdomain(&self, name: &Name) -> Option<&str> {
+        let name = canonical_name(name);
+        let label_count = name.iter().count();
+        (1..label_count)
             .rev()
             .find_map(|labels| self.entries.get(&name.trim_to(labels)).map(String::as_str))
     }
@@ -242,13 +250,13 @@ mod tests {
 
     fn route(
         name: &str,
-        domains: &[&str],
+        subdomains: &[&str],
         unqualified: bool,
         reverse_cidrs: &[&str],
     ) -> LocalRouteConfig {
         LocalRouteConfig {
             name: name.to_owned(),
-            domains: domains.iter().map(|value| (*value).to_owned()).collect(),
+            subdomains: subdomains.iter().map(|value| (*value).to_owned()).collect(),
             unqualified,
             reverse_cidrs: reverse_cidrs
                 .iter()
@@ -264,14 +272,17 @@ mod tests {
     }
 
     #[test]
-    fn local_domains_use_label_aware_longest_suffix() {
+    fn local_subdomains_use_label_aware_longest_suffix() {
         let table = RoutingTable::new(&[
             route("parent", &["example.com"], false, &[]),
             route("child", &["corp.example.com"], false, &[]),
         ])
         .unwrap();
         assert_eq!(table.lookup(&name("host.corp.example.com.")), Some("child"));
+        assert_eq!(table.lookup(&name("corp.example.com.")), Some("parent"));
         assert_eq!(table.lookup(&name("host.example.com.")), Some("parent"));
+        assert_eq!(table.lookup(&name("deep.host.example.com.")), Some("parent"));
+        assert_eq!(table.lookup(&name("example.com.")), None);
         assert_eq!(table.lookup(&name("badexample.com.")), None);
         assert_eq!(table.lookup(&name("HOST.CORP.EXAMPLE.COM.")), Some("child"));
     }
@@ -336,6 +347,7 @@ mod tests {
     fn domain_pins_use_longest_suffix_and_reject_conflicts() {
         let pins =
             DomainPins::new([("example.com", "default"), ("video.example.com", "video")]).unwrap();
+        assert_eq!(pins.lookup(&name("example.com")), Some("default"));
         assert_eq!(pins.lookup(&name("cdn.video.example.com")), Some("video"));
         assert_eq!(pins.lookup(&name("www.example.com")), Some("default"));
         assert_eq!(pins.lookup(&name("notexample.com")), None);

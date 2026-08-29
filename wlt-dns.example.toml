@@ -23,7 +23,7 @@ ipv6_default_mark = 0xfff
 
 [[local_routes]]
 name = "local-dhcp"
-domains = ["lan.example.com"]
+subdomains = ["lan.example.com"]
 unqualified = true
 reverse_cidrs = ["192.0.2.0/24", "198.51.100.0/24"]
 servers = ["127.0.0.1:1053"]

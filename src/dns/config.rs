@@ -274,7 +274,7 @@ fn default_nft_family() -> NfFamily {
 pub(super) struct LocalRouteConfig {
     pub name: String,
     #[serde(default)]
-    pub domains: Vec<String>,
+    pub subdomains: Vec<String>,
     #[serde(default)]
     pub unqualified: bool,
     #[serde(default)]
@@ -290,7 +290,7 @@ impl LocalRouteConfig {
             "local route name cannot be empty"
         );
         ensure!(
-            self.unqualified || !self.domains.is_empty() || !self.reverse_cidrs.is_empty(),
+            self.unqualified || !self.subdomains.is_empty() || !self.reverse_cidrs.is_empty(),
             "local route {} has no routing predicate",
             self.name
         );
@@ -588,7 +588,7 @@ ipv6_default_mark = 0x0404
 
 [[local_routes]]
 name = "lan"
-domains = ["home.arpa"]
+subdomains = ["home.arpa"]
 unqualified = true
 reverse_cidrs = ["10.0.0.0/8", "fd00::/8"]
 servers = ["10.0.0.53:53"]
@@ -730,6 +730,12 @@ cn_last = true
         );
         let error = DnsConfig::parse(&input).unwrap_err().to_string();
         assert!(error.contains("failed to parse DNS configuration"));
+    }
+
+    #[test]
+    fn rejects_inclusive_local_domain_routes() {
+        let input = VALID.replace("subdomains =", "domains =");
+        assert!(DnsConfig::parse(&input).is_err());
     }
 
     #[test]
