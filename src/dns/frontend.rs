@@ -416,7 +416,7 @@ impl DnsFrontend {
 }
 
 fn local_response_succeeded(response: &Message) -> bool {
-    response.metadata.response_code == ResponseCode::NoError && !response.answers.is_empty()
+    response.metadata.response_code == ResponseCode::NoError
 }
 
 fn preferred_upstream_family(query_type: RecordType, peer: IpAddr) -> AddressFamily {
@@ -591,22 +591,27 @@ mod tests {
     }
 
     #[test]
-    fn local_response_requires_a_successful_answer() {
+    fn local_response_accepts_positive_and_nodata_answers() {
         let name = Name::from_ascii("host.example.test.").unwrap();
         let mut answered = Message::response(1, OpCode::Query);
         answered.add_answer(Record::from_rdata(
-            name,
+            name.clone(),
             60,
             RData::A(A(Ipv4Addr::LOCALHOST)),
         ));
         assert!(local_response_succeeded(&answered));
 
-        let empty = Message::response(1, OpCode::Query);
-        assert!(!local_response_succeeded(&empty));
+        let mut empty = Message::response(1, OpCode::Query);
+        empty.add_query(Query::query(name, RecordType::AAAA));
+        assert!(local_response_succeeded(&empty));
 
         let mut refused = answered;
         refused.metadata.response_code = ResponseCode::Refused;
         assert!(!local_response_succeeded(&refused));
+
+        let mut nxdomain = Message::response(1, OpCode::Query);
+        nxdomain.metadata.response_code = ResponseCode::NXDomain;
+        assert!(!local_response_succeeded(&nxdomain));
     }
 
     #[test]
