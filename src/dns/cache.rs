@@ -7,7 +7,7 @@ use std::{
 use anyhow::Result;
 use hickory_proto::{
     op::{Message, ResponseCode},
-    rr::{RData, RecordType},
+    rr::{Name, RData, RecordType},
 };
 use moka::{Expiry, future::Cache};
 
@@ -20,6 +20,20 @@ pub(super) struct CacheKey {
     pub normalized_request: Arc<[u8]>,
     pub peer_family: AddressFamily,
     pub selection: Selection,
+    pub outlet_group: usize,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct ViewKey {
+    pub name: Name,
+    pub peer_family: AddressFamily,
+    pub selection: Selection,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct LearnedView {
+    pub outlet_group: usize,
+    pub ttl: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +55,43 @@ impl Expiry<CacheKey, CachedResponse> for DnsExpiry {
         _created_at: Instant,
     ) -> Option<Duration> {
         Some(value.ttl)
+    }
+}
+
+#[derive(Debug)]
+struct LearnedViewExpiry;
+
+impl Expiry<ViewKey, LearnedView> for LearnedViewExpiry {
+    fn expire_after_create(
+        &self,
+        _key: &ViewKey,
+        value: &LearnedView,
+        _created_at: Instant,
+    ) -> Option<Duration> {
+        Some(value.ttl)
+    }
+}
+
+pub(super) struct LearnedViewCache {
+    inner: Cache<ViewKey, LearnedView>,
+}
+
+impl LearnedViewCache {
+    pub(super) fn new(max_entries: u64) -> Self {
+        Self {
+            inner: Cache::builder()
+                .max_capacity(max_entries)
+                .expire_after(LearnedViewExpiry)
+                .build(),
+        }
+    }
+
+    pub(super) async fn get(&self, key: &ViewKey) -> Option<LearnedView> {
+        self.inner.get(key).await
+    }
+
+    pub(super) async fn insert_if_absent(&self, key: ViewKey, view: LearnedView) -> LearnedView {
+        self.inner.entry(key).or_insert(view).await.into_value()
     }
 }
 
@@ -137,7 +188,7 @@ impl DnsCache {
     }
 }
 
-fn cache_ttl(message: &mut Message) -> Option<u32> {
+pub(super) fn cache_ttl(message: &mut Message) -> Option<u32> {
     let query_type = message.queries.first()?.query_type();
     let response_code = message.response_code;
     let negative = match response_code {
@@ -213,11 +264,26 @@ mod tests {
         },
     };
 
-    use super::{AddressFamily, CacheKey, DnsCache, Selection, age_ttls, cache_ttl};
+    use super::{
+        AddressFamily, CacheKey, DnsCache, LearnedView, LearnedViewCache, Selection, ViewKey,
+        age_ttls, cache_ttl,
+    };
 
     fn key(map_mark: u32) -> CacheKey {
         CacheKey {
             normalized_request: Arc::from([0_u8, 0, 1, 0]),
+            peer_family: AddressFamily::Ipv4,
+            selection: Selection {
+                map_mark,
+                default_mark: 2,
+            },
+            outlet_group: 0,
+        }
+    }
+
+    fn view_key(map_mark: u32) -> ViewKey {
+        ViewKey {
+            name: Name::from_ascii("example.test.").unwrap(),
             peer_family: AddressFamily::Ipv4,
             selection: Selection {
                 map_mark,
@@ -331,6 +397,9 @@ mod tests {
 
         assert!(cache.get(&key(1)).await.is_some());
         assert!(cache.get(&key(9)).await.is_none());
+        let mut other_group = key(1);
+        other_group.outlet_group = 1;
+        assert!(cache.get(&other_group).await.is_none());
     }
 
     #[tokio::test]
@@ -383,5 +452,53 @@ mod tests {
         assert!(!first.unwrap().1);
         assert!(!second.unwrap().1);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn learned_view_keeps_the_first_non_default_group_until_expiry() {
+        let cache = LearnedViewCache::new(10);
+        let first = LearnedView {
+            outlet_group: 1,
+            ttl: Duration::from_secs(30),
+        };
+        let second = LearnedView {
+            outlet_group: 2,
+            ttl: Duration::from_secs(30),
+        };
+
+        let (first_result, second_result) = tokio::join!(
+            cache.insert_if_absent(view_key(1), first),
+            cache.insert_if_absent(view_key(1), second),
+        );
+
+        assert_eq!(first_result.outlet_group, second_result.outlet_group);
+        assert_eq!(
+            cache.get(&view_key(1)).await.unwrap().outlet_group,
+            first_result.outlet_group
+        );
+    }
+
+    #[tokio::test]
+    async fn learned_views_expire_and_do_not_cross_selections() {
+        let cache = LearnedViewCache::new(10);
+        cache
+            .insert_if_absent(
+                view_key(1),
+                LearnedView {
+                    outlet_group: 1,
+                    ttl: Duration::from_millis(10),
+                },
+            )
+            .await;
+
+        assert!(cache.get(&view_key(9)).await.is_none());
+        let mut other_family = view_key(1);
+        other_family.peer_family = AddressFamily::Ipv6;
+        assert!(cache.get(&other_family).await.is_none());
+        let mut other_name = view_key(1);
+        other_name.name = Name::from_ascii("other.test.").unwrap();
+        assert!(cache.get(&other_name).await.is_none());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(cache.get(&view_key(1)).await.is_none());
     }
 }

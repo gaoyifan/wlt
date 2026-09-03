@@ -211,7 +211,9 @@ dnsmasq 或其他 literal-IP backend；本地查询失败时继续使用公网�
 AAAA 查询会同时使用 IPv4 与 IPv6 上游端点；A 优先采用 IPv4 传输的结果，AAAA
 优先采用 IPv6 传输的结果，
 首选传输失败时使用已经并行发起的另一族查询。其他查询类型沿用客户端连接的
-地址族。与 WLT 一样，DNS 分流也由 `outlet_groups` 描述；每组沿用
+地址族。A/AAAA 命中的非默认出口组会按域名、客户端地址族和 WLT 选择缓存；
+缓存有效时所有查询类型都沿用该组。默认组不写入该缓存，未命中的查询仍按默认组
+解析。与 WLT 一样，DNS 分流也由 `outlet_groups` 描述；每组沿用
 `title`、`mask`、`outlets` 和 `outlets_v6`，并选择一个命名的 `dns_server`。
 `[policy].family` 与 WLT 的 `[nftables].family` 使用相同的 `inet`、`ip`、`ip6`
 取值；单族 table 只配置对应地址族的 client map，默认值为 `inet`。

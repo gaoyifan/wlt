@@ -170,7 +170,7 @@ fn parse_suffix(value: &str) -> Result<Name> {
     Ok(name)
 }
 
-fn canonical_name(name: &Name) -> Name {
+pub(super) fn canonical_name(name: &Name) -> Name {
     let mut name = name.to_lowercase();
     name.set_fqdn(true);
     name

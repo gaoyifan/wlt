@@ -19,13 +19,13 @@ use regex::Regex;
 
 use super::{
     AddressFamily,
-    cache::{CacheKey, DnsCache},
+    cache::{CacheKey, DnsCache, LearnedView, LearnedViewCache, ViewKey, cache_ttl},
     config::{
         DnsConfig, DnsOutletGroupConfig, DnsServerConfig, LocalRouteConfig, UpstreamProtocol,
     },
     exchange::{ExchangePool, ExchangeTarget},
     metrics::DnsMetrics,
-    routing::{DomainPins, RoutingTable},
+    routing::{DomainPins, RoutingTable, canonical_name},
 };
 
 #[cfg(not(target_os = "linux"))]
@@ -74,6 +74,7 @@ pub(super) struct DnsFrontend {
     default_outlet_group: usize,
     exchange: ExchangePool,
     cache: DnsCache,
+    learned_views: LearnedViewCache,
     metrics: DnsMetrics,
     max_response_ttl: u32,
 }
@@ -144,6 +145,7 @@ impl DnsFrontend {
                 config.server.max_doh_body,
             ),
             cache: DnsCache::new(config.cache.max_entries, config.cache.max_weight_bytes),
+            learned_views: LearnedViewCache::new(config.cache.max_entries),
             metrics: DnsMetrics,
             max_response_ttl: config.server.max_response_ttl,
         })
@@ -189,30 +191,13 @@ impl DnsFrontend {
             }
         };
         request.metadata.id = 0;
-        let normalized_request = match request.to_vec() {
-            Ok(wire) => Arc::from(wire),
-            Err(_) => return response_for(original_id, &query, ResponseCode::FormErr),
-        };
-        let key = CacheKey {
-            normalized_request,
-            peer_family: AddressFamily::from(peer.ip()),
-            selection,
-        };
-        let loaded = self
-            .cache
-            .get_or_try_insert_with(key, async {
-                let mut response = self
-                    .answer_public(peer.ip(), &query, &request, selection)
-                    .await?;
-                strip_ecs(&mut response);
-                response.metadata.id = 0;
-                Ok(response)
-            })
-            .await;
-        let (mut response, cache_hit) = match loaded {
-            Ok(response) => response,
+        let (mut response, cache_hit) = match self
+            .answer_public_cached(peer.ip(), &query, &request, selection)
+            .await
+        {
+            Ok(answer) => answer,
             Err(error) => {
-                tracing::warn!(%peer, %error, "all eligible DNS upstreams failed");
+                tracing::warn!(%peer, %error, "public DNS resolution failed");
                 return response_for(original_id, &query, ResponseCode::ServFail);
             }
         };
@@ -264,13 +249,13 @@ impl DnsFrontend {
         Err(last_error.unwrap_or_else(|| anyhow!("local route has no servers")))
     }
 
-    async fn answer_public(
+    async fn answer_public_cached(
         &self,
         peer: IpAddr,
         query: &hickory_proto::op::Query,
         request: &Message,
         selection: super::policy::Selection,
-    ) -> Result<Message> {
+    ) -> Result<(Message, bool)> {
         if let Some(pin) = self.domain_pins.lookup(query.name()) {
             let group_index = self
                 .outlet_groups
@@ -278,39 +263,134 @@ impl DnsFrontend {
                 .position(|group| group.config.title == pin)
                 .expect("domain pin must refer to an immutable outlet group");
             return self
-                .query_outlet_group(group_index, peer, request, selection)
+                .answer_from_group(group_index, peer, request, selection, false)
                 .await;
         }
 
-        if !matches!(query.query_type(), RecordType::A | RecordType::AAAA) {
+        let address_query = matches!(query.query_type(), RecordType::A | RecordType::AAAA);
+        let view_key = ViewKey {
+            name: canonical_name(query.name()),
+            peer_family: AddressFamily::from(peer),
+            selection,
+        };
+        if let Some(view) = self.learned_views.get(&view_key).await {
             return self
-                .query_outlet_group(self.default_outlet_group, peer, request, selection)
+                .answer_from_group(view.outlet_group, peer, request, selection, address_query)
+                .await;
+        }
+        if !address_query {
+            return self
+                .answer_from_group(self.default_outlet_group, peer, request, selection, false)
                 .await;
         }
 
+        self.discover_address_answer(peer, request, selection, view_key)
+            .await
+    }
+
+    async fn discover_address_answer(
+        &self,
+        peer: IpAddr,
+        request: &Message,
+        selection: super::policy::Selection,
+        view_key: ViewKey,
+    ) -> Result<(Message, bool)> {
         let mut pending = self
             .outlet_groups
             .iter()
             .enumerate()
-            .map(|(index, _)| self.query_outlet_group(index, peer, request, selection))
+            .map(|(index, _)| self.query_outlet_group_cached(index, peer, request, selection))
             .collect::<FuturesOrdered<_>>()
             .enumerate();
         let mut default_result = None;
         while let Some((index, result)) = pending.next().await {
-            if let Ok(response) = &result
-                && self.outlet_groups[index]
-                    .classifier
-                    .matches_response(response)
-            {
-                let mut response = response.clone();
-                reorder_matching(&mut response, &self.outlet_groups[index].classifier);
-                return Ok(response);
-            }
             if index == self.default_outlet_group {
                 default_result = Some(result);
+                continue;
+            }
+            if result.as_ref().is_ok_and(|(response, _)| {
+                self.outlet_groups[index]
+                    .classifier
+                    .matches_response(response)
+            }) {
+                let (mut response, cache_hit) =
+                    result.expect("matched response must be successful");
+                let learned = cache_ttl(&mut response.clone()).map(|ttl| LearnedView {
+                    outlet_group: index,
+                    ttl: Duration::from_secs(u64::from(ttl)),
+                });
+                let winner = if let Some(learned) = learned {
+                    Some(self.learned_views.insert_if_absent(view_key, learned).await)
+                } else {
+                    self.learned_views.get(&view_key).await
+                };
+                if let Some(winner) = winner
+                    && winner.outlet_group != index
+                {
+                    return self
+                        .answer_from_group(winner.outlet_group, peer, request, selection, true)
+                        .await;
+                }
+                reorder_matching(&mut response, &self.outlet_groups[index].classifier);
+                return Ok((response, cache_hit));
             }
         }
-        default_result.expect("validated default index")
+
+        if let Some(winner) = self.learned_views.get(&view_key).await {
+            return self
+                .answer_from_group(winner.outlet_group, peer, request, selection, true)
+                .await;
+        }
+        let (response, cache_hit) = default_result.expect("validated default index")?;
+        Ok((response, cache_hit))
+    }
+
+    async fn answer_from_group(
+        &self,
+        outlet_group: usize,
+        peer: IpAddr,
+        request: &Message,
+        selection: super::policy::Selection,
+        reorder: bool,
+    ) -> Result<(Message, bool)> {
+        let (mut response, cache_hit) = self
+            .query_outlet_group_cached(outlet_group, peer, request, selection)
+            .await?;
+        if reorder {
+            reorder_matching(&mut response, &self.outlet_groups[outlet_group].classifier);
+        }
+        Ok((response, cache_hit))
+    }
+
+    async fn query_outlet_group_cached(
+        &self,
+        outlet_group: usize,
+        peer: IpAddr,
+        request: &Message,
+        selection: super::policy::Selection,
+    ) -> Result<(Message, bool)> {
+        let normalized_request = Arc::from(
+            request
+                .to_vec()
+                .context("failed to serialize normalized DNS request")?,
+        );
+        let key = CacheKey {
+            normalized_request,
+            peer_family: AddressFamily::from(peer),
+            selection,
+            outlet_group,
+        };
+        self.cache
+            .get_or_try_insert_with(key, async {
+                let mut response = self
+                    .query_outlet_group(outlet_group, peer, request, selection)
+                    .await?;
+                strip_ecs(&mut response);
+                response.metadata.id = 0;
+                Ok(response)
+            })
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
     }
 
     async fn query_outlet_group(
@@ -730,6 +810,7 @@ mod tests {
                 map_mark: 1,
                 default_mark: 2,
             },
+            outlet_group: 0,
         };
         let cache = DnsCache::new(10, 10_000);
         let (mut client_response, cache_hit) = cache
