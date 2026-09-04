@@ -522,6 +522,7 @@ pub(super) enum UpstreamProtocol {
 pub(super) struct CacheConfig {
     pub max_entries: u64,
     pub max_weight_bytes: u64,
+    pub learned_view_min_ttl_seconds: u64,
 }
 
 impl Default for CacheConfig {
@@ -529,6 +530,7 @@ impl Default for CacheConfig {
         Self {
             max_entries: 10_000,
             max_weight_bytes: 64 * 1024 * 1024,
+            learned_view_min_ttl_seconds: 600,
         }
     }
 }
@@ -642,6 +644,19 @@ dns_server = "regional"
         assert_eq!(config.policy.family, NfFamily::INet);
         assert_eq!(config.cache.max_entries, 10_000);
         assert_eq!(config.cache.max_weight_bytes, 64 * 1024 * 1024);
+        assert_eq!(config.cache.learned_view_min_ttl_seconds, 600);
+
+        let custom = DnsConfig::parse(&format!(
+            "{VALID}\n[cache]\nlearned_view_min_ttl_seconds = 42\n"
+        ))
+        .unwrap();
+        assert_eq!(custom.cache.learned_view_min_ttl_seconds, 42);
+
+        let existing = DnsConfig::parse(&format!(
+            "{VALID}\n[cache]\nmax_entries = 20\nmax_weight_bytes = 4096\n"
+        ))
+        .unwrap();
+        assert_eq!(existing.cache.learned_view_min_ttl_seconds, 600);
         assert_eq!(config.metrics.listen, "127.0.0.1:9421".parse().unwrap());
         assert_eq!(
             config.local_routes[0].reverse_cidrs[0],

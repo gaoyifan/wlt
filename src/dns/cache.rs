@@ -59,7 +59,9 @@ impl Expiry<CacheKey, CachedResponse> for DnsExpiry {
 }
 
 #[derive(Debug)]
-struct LearnedViewExpiry;
+struct LearnedViewExpiry {
+    minimum_ttl: Duration,
+}
 
 impl Expiry<ViewKey, LearnedView> for LearnedViewExpiry {
     fn expire_after_create(
@@ -68,7 +70,7 @@ impl Expiry<ViewKey, LearnedView> for LearnedViewExpiry {
         value: &LearnedView,
         _created_at: Instant,
     ) -> Option<Duration> {
-        Some(value.ttl)
+        Some(value.ttl.max(self.minimum_ttl))
     }
 }
 
@@ -77,11 +79,11 @@ pub(super) struct LearnedViewCache {
 }
 
 impl LearnedViewCache {
-    pub(super) fn new(max_entries: u64) -> Self {
+    pub(super) fn new(max_entries: u64, minimum_ttl: Duration) -> Self {
         Self {
             inner: Cache::builder()
                 .max_capacity(max_entries)
-                .expire_after(LearnedViewExpiry)
+                .expire_after(LearnedViewExpiry { minimum_ttl })
                 .build(),
         }
     }
@@ -253,7 +255,7 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use hickory_proto::{
@@ -263,10 +265,11 @@ mod tests {
             rdata::{A, SOA},
         },
     };
+    use moka::Expiry;
 
     use super::{
-        AddressFamily, CacheKey, DnsCache, LearnedView, LearnedViewCache, Selection, ViewKey,
-        age_ttls, cache_ttl,
+        AddressFamily, CacheKey, DnsCache, LearnedView, LearnedViewCache, LearnedViewExpiry,
+        Selection, ViewKey, age_ttls, cache_ttl,
     };
 
     fn key(map_mark: u32) -> CacheKey {
@@ -456,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn learned_view_keeps_the_first_non_default_group_until_expiry() {
-        let cache = LearnedViewCache::new(10);
+        let cache = LearnedViewCache::new(10, Duration::ZERO);
         let first = LearnedView {
             outlet_group: 1,
             ttl: Duration::from_secs(30),
@@ -478,9 +481,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn learned_view_expiry_enforces_minimum_ttl() {
+        let expiry = LearnedViewExpiry {
+            minimum_ttl: Duration::from_secs(600),
+        };
+        let mut view = LearnedView {
+            outlet_group: 1,
+            ttl: Duration::from_secs(30),
+        };
+
+        assert_eq!(
+            expiry.expire_after_create(&view_key(1), &view, Instant::now()),
+            Some(Duration::from_secs(600))
+        );
+        view.ttl = Duration::from_secs(900);
+        assert_eq!(
+            expiry.expire_after_create(&view_key(1), &view, Instant::now()),
+            Some(Duration::from_secs(900))
+        );
+    }
+
     #[tokio::test]
     async fn learned_views_expire_and_do_not_cross_selections() {
-        let cache = LearnedViewCache::new(10);
+        let cache = LearnedViewCache::new(10, Duration::ZERO);
         cache
             .insert_if_absent(
                 view_key(1),

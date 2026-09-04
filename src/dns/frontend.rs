@@ -145,7 +145,10 @@ impl DnsFrontend {
                 config.server.max_doh_body,
             ),
             cache: DnsCache::new(config.cache.max_entries, config.cache.max_weight_bytes),
-            learned_views: LearnedViewCache::new(config.cache.max_entries),
+            learned_views: LearnedViewCache::new(
+                config.cache.max_entries,
+                Duration::from_secs(config.cache.learned_view_min_ttl_seconds),
+            ),
             metrics: DnsMetrics,
             max_response_ttl: config.server.max_response_ttl,
         })
