@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs,
+    fs, io,
     net::{IpAddr, SocketAddr},
     path::Path,
     sync::Arc,
@@ -10,8 +10,11 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use futures_util::{StreamExt, stream::FuturesOrdered};
 use hickory_proto::{
-    op::{Message, MessageType, OpCode, ResponseCode},
-    rr::{DNSClass, Name, RData, Record, RecordType, rdata::opt::EdnsCode},
+    op::{Edns, Message, MessageType, OpCode, ResponseCode},
+    rr::{
+        DNSClass, Name, RData, Record, RecordType,
+        rdata::opt::{EdnsCode, EdnsOption},
+    },
 };
 use ipnet::IpNet;
 use prefix_trie::joint::JointPrefixMap;
@@ -201,7 +204,17 @@ impl DnsFrontend {
             Ok(answer) => answer,
             Err(error) => {
                 tracing::warn!(%peer, %error, "public DNS resolution failed");
-                return response_for(original_id, &query, ResponseCode::ServFail);
+                let mut response = response_for(original_id, &query, ResponseCode::ServFail);
+                if error.downcast_ref::<io::Error>().is_some()
+                    && let Some(client_edns) = request.edns.as_ref()
+                {
+                    let mut edns = Edns::new();
+                    edns.set_max_payload(client_edns.max_payload());
+                    edns.options_mut()
+                        .insert(EdnsOption::Unknown(15, vec![0, 23]));
+                    response.edns = Some(edns);
+                }
+                return response;
             }
         };
         self.metrics.cache_lookup(cache_hit);
@@ -393,7 +406,18 @@ impl DnsFrontend {
                 Ok(response)
             })
             .await
-            .map_err(|error| anyhow!(error.to_string()))
+            .map_err(|error| {
+                let message = error.to_string();
+                if let Some(network_error) = error.root_cause().downcast_ref::<io::Error>()
+                    && matches!(
+                        network_error.kind(),
+                        io::ErrorKind::NetworkUnreachable | io::ErrorKind::HostUnreachable
+                    )
+                {
+                    return anyhow!(io::Error::new(network_error.kind(), message));
+                }
+                anyhow!(message)
+            })
     }
 
     async fn query_outlet_group(
